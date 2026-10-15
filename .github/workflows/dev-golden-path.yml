@@ -1,0 +1,222 @@
+name: DEV 2026-10-11.25 Golden Path
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/dev-golden-path.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atk-vpe-dev
+  cancel-in-progress: false
+
+env:
+  ATK_DEV_SCRIPT_ID: 1LS3HabXjXOainAMiNLVVlRX5LEaA-o5Y7Kf31Fg-JQJZsR4ZKHI5zHUN
+  ATK_DEV_WEBAPP_DEPLOYMENT_ID: AKfycbwzHdJptr44J1aWN4UqHp6qN435kwFPbG8ngYGEYABqypF2urE0Jyd0hLd63M-wYVVE
+  EXPECTED_VERSION: 2026-10-11.25
+
+jobs:
+  golden-path:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Validate JavaScript
+        shell: bash
+        run: |
+          files=$(find . -maxdepth 1 -type f -name '*.js' -print)
+          test -n "$files"
+          while IFS= read -r file; do
+            node --check "$file"
+          done <<< "$files"
+
+      - name: Install clasp
+        run: npm install --global @google/clasp@3.4.1
+
+      - name: Configure clasp authentication
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw=os.environ.get('CLASPRC_JSON','').strip()
+          start=raw.find('{'); end=raw.rfind('}')
+          if start < 0 or end < start:
+              raise SystemExit('CLASPRC_JSON does not contain a JSON object.')
+          parsed=json.loads(raw[start:end+1])
+          target=Path.home()/'.clasprc.json'
+          target.write_text(json.dumps(parsed))
+          target.chmod(0o600)
+          PY
+
+      - name: Verify DEV target
+        shell: bash
+        run: |
+          grep -q "$ATK_DEV_SCRIPT_ID" .clasp.json
+          grep -q "const API_V1_VERSION_ = '$EXPECTED_VERSION'" WebApiV1.js
+
+      - name: Build isolated DEV workspace
+        shell: bash
+        run: |
+          rm -rf /tmp/atk-vpe-dev
+          mkdir -p /tmp/atk-vpe-dev
+          cp .clasp.json /tmp/atk-vpe-dev/.clasp.json
+          cd /tmp/atk-vpe-dev
+          clasp pull
+          find . -maxdepth 1 -type f \
+            \( -name '*.js' -o -name '*.gs' -o -name '*.html' \) \
+            -delete
+          find "$GITHUB_WORKSPACE" -maxdepth 1 -type f \
+            \( -name '*.js' -o -name '*.gs' -o -name '*.html' \) \
+            -exec cp {} /tmp/atk-vpe-dev/ \;
+          test -f /tmp/atk-vpe-dev/Code.js
+          test -f /tmp/atk-vpe-dev/WebApiV1.js
+
+      - name: Refresh Apps Script HEAD and verify deployed .25
+        shell: bash
+        run: |
+          cd /tmp/atk-vpe-dev
+          clasp push --force
+          clasp list-deployments | tee /tmp/atk-deployments.txt
+          grep -q "$ATK_DEV_WEBAPP_DEPLOYMENT_ID" /tmp/atk-deployments.txt
+          grep -q "8390a5d533f58cc9e062e342ea0725a2deb063d5" /tmp/atk-deployments.txt
+
+      - name: Prepare Google OAuth access token
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, time, urllib.parse, urllib.request
+          from pathlib import Path
+
+          data=json.loads((Path.home()/'.clasprc.json').read_text())
+
+          cred=None
+          tokens=data.get('tokens') or {}
+          if isinstance(tokens,dict):
+              cred=tokens.get('default')
+              if not cred:
+                  cred=next((v for v in tokens.values() if isinstance(v,dict)),None)
+
+          if not cred and isinstance(data.get('token'),dict):
+              cred=dict(data['token'])
+              settings=data.get('oauth2ClientSettings') or {}
+              cred.setdefault('client_id',settings.get('clientId'))
+              cred.setdefault('client_secret',settings.get('clientSecret'))
+
+          if not cred:
+              cred=data
+
+          token=cred.get('access_token')
+          expiry=int(cred.get('expiry_date') or cred.get('exprity_date') or 0)
+          if not token or (expiry and expiry <= int(time.time()*1000)+60000):
+              refresh=cred.get('refresh_token')
+              client_id=cred.get('client_id')
+              client_secret=cred.get('client_secret')
+              if not (refresh and client_id and client_secret):
+                  raise SystemExit('No refreshable Google OAuth credential found.')
+              body=urllib.parse.urlencode({
+                  'client_id':client_id,
+                  'client_secret':client_secret,
+                  'refresh_token':refresh,
+                  'grant_type':'refresh_token'
+              }).encode()
+              req=urllib.request.Request(
+                  'https://oauth2.googleapis.com/token',
+                  data=body,
+                  headers={'Content-Type':'application/x-www-form-urlencoded'}
+              )
+              with urllib.request.urlopen(req,timeout=30) as resp:
+                  token=json.loads(resp.read().decode())['access_token']
+
+          p=Path('/tmp/google_access_token')
+          p.write_text(token)
+          p.chmod(0o600)
+          print('Google OAuth access token prepared.')
+          PY
+
+      - name: Run master regression gate through authenticated DEV HEAD
+        shell: bash
+        run: |
+          token=$(cat /tmp/google_access_token)
+          for suffix in dev exec; do
+            code=$(curl --location --silent --show-error \
+              --max-time 330 \
+              --output /tmp/master.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer $token" \
+              --header 'Content-Type: application/json' \
+              --data '{"system_action":"DEV_MASTER_REGRESSION","verify_token":"ATK_VPE_VERIFY_2026_X7K9M4P2"}' \
+              "https://script.google.com/macros/s/AKfycbzpNOaOrEtEliLxcCIu9m4hSVhAq-2Tg2pL2tqQztM/$suffix")
+            if [ "$code" = "200" ]; then
+              echo "Authenticated DEV HEAD responded on /$suffix."
+              break
+            fi
+            echo "DEV HEAD /$suffix returned HTTP $code."
+          done
+          test "$code" = "200"
+          cat /tmp/master.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report=json.loads(Path('/tmp/master.json').read_text())
+          assert report.get('ok') is True, report
+          assert report.get('version')=='2026-10-11.25', report
+          assert report.get('core',{}).get('ok') is True, report
+          assert report.get('configured_workflows',{}).get('ok') is True, report
+          forced=report.get('forced_enabled_workflows',{})
+          assert forced.get('ok') is True, report
+          flags=forced.get('flags',{})
+          for key in (
+              'intro_workflow_enabled',
+              'tmod_workflow_enabled',
+              'grammarian_workflow_enabled',
+              'evaluation_workflow_enabled'
+          ):
+              assert flags.get(key) is True, (key, flags)
+          print('MASTER_REGRESSION_OK')
+          PY
+
+      - name: Start real WhatsApp golden path through authenticated DEV HEAD
+        shell: bash
+        run: |
+          token=$(cat /tmp/google_access_token)
+          for suffix in dev exec; do
+            code=$(curl --location --silent --show-error \
+              --max-time 120 \
+              --output /tmp/golden.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer $token" \
+              --header 'Content-Type: application/json' \
+              --data '{"system_action":"DEV_WHATSAPP_GOLDEN_START","verify_token":"ATK_VPE_VERIFY_2026_X7K9M4P2"}' \
+              "https://script.google.com/macros/s/AKfycbzpNOaOrEtEliLxcCIu9m4hSVhAq-2Tg2pL2tqQztM/$suffix")
+            if [ "$code" = "200" ]; then
+              break
+            fi
+          done
+          test "$code" = "200"
+          cat /tmp/golden.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('/tmp/golden.json').read_text())
+          assert report.get('ok') is True, report
+          assert report.get('version')=='2026-10-11.25', report
+          assert report.get('expected_selection')=='Timer', report
+          print('GOLDEN_PATH_STARTED')
+          print(json.dumps(report,indent=2))
+          PY

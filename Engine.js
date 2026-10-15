@@ -1,0 +1,1032 @@
+/**
+ * ATK VPE Phase 1 automation engine.
+ * All logic is DEV-first and controlled by Automation Config switches.
+ */
+
+let DEV_OUTBOUND_CAPTURE_ = null;
+
+const ROLE_DEFS_ = [
+  { code: 'TMOD', name: 'Toastmaster of the Day', column: 19 },
+  { code: 'GE', name: 'General Evaluator', column: 20 },
+  { code: 'TTM', name: 'Table Topics Master', column: 21 },
+  { code: 'Timer', name: 'Timer', column: 22 },
+  { code: 'Ah', name: 'Ah-Counter', column: 23 },
+  { code: 'GRM', name: 'Grammarian', column: 24 },
+  { code: 'EV1', name: 'Evaluator 1', column: 26, evaluatorSlot: 1 },
+  { code: 'EV2', name: 'Evaluator 2', column: 27, evaluatorSlot: 2 },
+  { code: 'EV3', name: 'Evaluator 3', column: 28, evaluatorSlot: 3 }
+];
+
+function availableRoleDefs_(row) {
+  return ROLE_DEFS_.filter(def => {
+    if (String(row[def.column - 1] || '').trim()) return false;
+    return !def.evaluatorSlot ||
+      Boolean(String(row[[6, 10, 14][def.evaluatorSlot - 1]] || '').trim());
+  }).map(def => def.evaluatorSlot ? Object.assign({}, def, {
+    speakerName: String(row[[6, 10, 14][def.evaluatorSlot - 1]] || '').trim()
+  }) : def);
+}
+
+function processWhatsAppAutomation_(payload) {
+  const entries = payload.entry || [];
+
+  entries.forEach(entry => {
+    (entry.changes || []).forEach(change => {
+      const value = change.value || {};
+
+      (value.messages || []).forEach(message => {
+        try {
+          processInboundWhatsAppMessage_(message);
+        } catch (error) {
+          logAutomation_('WhatsApp', '', message.from || '', 'Inbound processing failed', 'Error', String(error));
+          console.error(error);
+        }
+      });
+
+      (value.statuses || []).forEach(status => {
+        try {
+          updateOutboxDeliveryStatus_(status);
+        } catch (error) {
+          console.error(error);
+        }
+      });
+    });
+  });
+}
+
+function processInboundWhatsAppMessage_(message) {
+  const messageId = String(message.id || '');
+  if (!messageId) return;
+
+  // logWhatsAppWebhook_ runs first. Count > 1 means Meta retried this message.
+  if (isDuplicateWebhookMessage_(messageId)) {
+    logAutomation_('WhatsApp', '', '', 'Duplicate webhook ignored', 'Skipped', messageId);
+    return;
+  }
+
+  const phone = normalizePhone_(message.from || '');
+  const member = findMemberByWhatsApp_(phone);
+
+  if (member === 'Unknown') {
+    sendWhatsAppText_(phone,
+      'Hi. I could not match this WhatsApp number with the ATK active-member list. Please contact the VPE so your number can be updated.');
+    return;
+  }
+
+  if (message.type === 'image') {
+    handleGrammarImage_(member, phone, message);
+    return;
+  }
+
+  const interaction = parseInteraction_(message);
+
+  // Fast-path role interactions before any task rebuild. These replies should
+  // be near-immediate and do not depend on regenerated task rows.
+  if (interaction.kind === 'ROLE_SELECTION') {
+    handleRoleSelection_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'ROLE_MENU') {
+    handleRoleMenuRequest_(member, phone, interaction.meetingNo || 0);
+    return;
+  }
+
+  if (configBool_('TASK_ENGINE_ENABLED')) {
+    syncPhase1Tasks_();
+  }
+
+  if (interaction.kind === 'VPE_PROGRAMME_REVIEW') {
+    handleVpeProgrammeReviewAction_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'SPEAKER_MOVE_DATE_MENU') {
+    handleSpeakerMoveDateMenu_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'SPEAKER_MOVE_SELECTION') {
+    handleSpeakerMoveSelection_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'ROLE_SELECTION') {
+    handleRoleSelection_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'SPEECH_DATE_MENU') {
+    handleSpeechDateMenu_(member, phone);
+    return;
+  }
+
+  if (interaction.kind === 'SPEECH_SLOT_ACCEPT') {
+    handleSpeechSlotSelection_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'ROLE_MENU') {
+    handleRoleMenuRequest_(member, phone, interaction.meetingNo || 0);
+    return;
+  }
+
+  if (interaction.kind === 'EVALUATOR_COORD_CHECK') {
+    handleEvaluatorCoordinationCheckReply_(member, phone, interaction);
+    return;
+  }
+
+  if (interaction.kind === 'INTRO_CHOICE') {
+    handleIntroChoiceReply_(member, phone, interaction, messageId);
+    return;
+  }
+
+  if (interaction.kind === 'ADMIN_EXCEPTIONS') {
+    const vpeMember = configValue_('VPE_MEMBER_NAME', 'Riyas AF');
+    if (member === vpeMember) {
+      const digest = buildVpeExceptionDigest_();
+      sendWhatsAppText_(
+        phone,
+        digest || 'ATK VPE — No action needed in the configured exception window.'
+      );
+    }
+    return;
+  }
+
+  // VPE-only administration through WhatsApp.
+  const rawText = String(interaction.text || '').trim();
+  const vpeMember = configValue_('VPE_MEMBER_NAME', 'Riyas AF');
+
+  // A reply to the approved Grammarian Utility template reopens the WhatsApp
+  // service window. Start the locked theme-aware Word -> Idiom collection
+  // immediately instead of waiting for the next hourly scheduler tick.
+  if (handleGrammarTemplateReentry_(member, phone)) return;
+
+  if (handleGuidedReply_(member, phone, rawText, messageId)) return;
+
+  if (handleStructuredSubmission_(member, phone, rawText, messageId)) {
+    return;
+  }
+
+  if (member === vpeMember && rawText.toUpperCase() === 'ADMIN SETUP') {
+    if (configBool_('TASK_ENGINE_ENABLED')) {
+      syncPhase1Tasks_();
+    }
+    sendWhatsAppText_(phone,
+      'ATK Phase 1 setup is active ✅\nThe hourly scheduler is managed automatically through GitHub Actions, so no Apps Script trigger authorization is required.');
+    return;
+  }
+
+  if (member === vpeMember && rawText.toUpperCase() === 'ADMIN STATUS') {
+    sendWhatsAppText_(phone, buildPhase1StatusText_());
+    return;
+  }
+
+  if (member === vpeMember && rawText.toUpperCase() === 'ADMIN EXCEPTIONS') {
+    const digest = buildVpeExceptionDigest_();
+    sendWhatsAppText_(
+      phone,
+      digest || 'ATK VPE — No action needed in the configured exception window.'
+    );
+    return;
+  }
+
+  // Natural-language shortcuts for the permanent group link or direct chat.
+  const text = rawText.toLowerCase();
+  if (['role', 'roles', 'choose role', 'choose my role', 'role selection'].includes(text)) {
+    handleRoleMenuRequest_(member, phone);
+    return;
+  }
+}
+
+function handleGrammarTemplateReentry_(member, phone) {
+  if (!configBool_('GRAMMARIAN_WORKFLOW_ENABLED')) return false;
+  if (activeConversation_(phone)) return false;
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const planner = ss.getSheetByName('VPE Weekly Planner');
+  if (!planner || planner.getLastRow() < 3) return false;
+
+  const today = startOfDay_(new Date());
+  const rows = planner.getRange(3, 1, planner.getLastRow() - 2, 28).getValues();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const meetingNo = Number(row[0]);
+    const meetingDate = row[1];
+    const status = String(row[2] || '');
+    const theme = String(row[3] || '').trim();
+    const grammarian = String(row[22] || '').trim();
+
+    if (!meetingNo || !(meetingDate instanceof Date) || grammarian !== member) continue;
+    if (!meetingAutomationEligible_(meetingNo)) continue;
+    if (status === 'Completed' || status === 'Cancelled') continue;
+
+    const stage = grammarStageForMember_(meetingNo, member);
+    if (stage !== 'WORD' && stage !== 'IDIOM') continue;
+
+    const daysLeft = Math.round(
+      (startOfDay_(meetingDate) - today) / 86400000
+    );
+    if (!theme && daysLeft > 3) continue;
+
+    if (stage === 'WORD' && theme) {
+      const themeKey = ['GRAMMAR_THEME_CONTEXT', meetingNo, member, theme].join('|');
+      if (!hasReminderBeenSent_(themeKey)) {
+        const themeText =
+          'Hi ' + member + ',\n\n' +
+          'The theme for ATK Meeting ' + meetingNo + ' is *' + theme + '*.\n\n' +
+          'Please choose a Word of the Day and an Idiom of the Day that connect well with this theme.';
+        const themeResult = sendWhatsAppText_(phone, themeText);
+        recordWorkflowOutbound_(
+          member, phone, 'GRAMMAR_THEME_CONTEXT',
+          themeText, meetingNo, themeResult, themeKey
+        );
+        if (!themeResult || !themeResult.ok) return true;
+      }
+    }
+
+    sendGrammarStagePrompt_(
+      member,
+      phone,
+      meetingNo,
+      stage,
+      theme ? 'GRAMMAR_TEMPLATE_REENTRY_THEME' : 'GRAMMAR_TEMPLATE_REENTRY_T_MINUS_3'
+    );
+    return true;
+  }
+
+  return false;
+}
+
+function parseInteraction_(message) {
+  if (message.type === 'interactive') {
+    const listReply = message.interactive && message.interactive.list_reply;
+    const buttonReply = message.interactive && message.interactive.button_reply;
+    const reply = listReply || buttonReply;
+
+    if (reply) {
+      const id = String(reply.id || '');
+      if (id.indexOf('VPE_PLAN|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'VPE_PROGRAMME_REVIEW',
+          action: String(parts[1] || ''),
+          periodKey: String(parts[2] || ''),
+          text: String(reply.title || '')
+        };
+      }
+      if (id.indexOf('MOVE_SPEECH_DATES|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'SPEAKER_MOVE_DATE_MENU',
+          meetingNo: Number(parts[1] || 0),
+          slotRef: String(parts[2] || ''),
+          text: String(reply.title || '')
+        };
+      }
+      if (id.indexOf('MOVE_SPEECH|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'SPEAKER_MOVE_SELECTION',
+          oldMeetingNo: Number(parts[1] || 0),
+          slotRef: String(parts[2] || ''),
+          newMeetingNo: Number(parts[3] || 0),
+          text: String(reply.title || '')
+        };
+      }
+      if (id.indexOf('ROLE|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'ROLE_SELECTION',
+          meetingNo: Number(parts[1]),
+          roleCode: parts[2],
+          text: String(reply.title || '')
+        };
+      }
+      if (id === 'SPEECH_DATES') {
+        return {kind: 'SPEECH_DATE_MENU', text: String(reply.title || '')};
+      }
+      if (id.indexOf('SPEAK|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'SPEECH_SLOT_ACCEPT',
+          meetingNo: Number(parts[1]),
+          text: String(reply.title || '')
+        };
+      }
+      if (id.indexOf('EVAL_COORD|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'EVALUATOR_COORD_CHECK',
+          role: String(parts[1] || ''),
+          meetingNo: Number(parts[2] || 0),
+          answer: String(parts[3] || ''),
+          text: String(reply.title || '')
+        };
+      }
+      if (id.indexOf('INTRO_CHOICE|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'INTRO_CHOICE',
+          meetingNo: Number(parts[1] || 0),
+          related: String(parts[2] || ''),
+          choice: String(parts[3] || ''),
+          text: String(reply.title || '')
+        };
+      }
+      if (id === 'ADMIN_EXCEPTIONS') {
+        return { kind: 'ADMIN_EXCEPTIONS', text: String(reply.title || '') };
+      }
+      if (id.indexOf('ROLE_MENU|') === 0) {
+        const parts = id.split('|');
+        return {
+          kind: 'ROLE_MENU',
+          meetingNo: Number(parts[1] || 0),
+          text: String(reply.title || '')
+        };
+      }
+      if (id === 'ROLE_MENU' ||
+          String(reply.title || '').trim().toLowerCase() === 'view roles') {
+        return { kind: 'ROLE_MENU', meetingNo: 0, text: String(reply.title || '') };
+      }
+    }
+  }
+
+  if (message.type === 'button' && message.button) {
+    const payload = String(message.button.payload || '');
+    if (payload.indexOf('VPE_PLAN|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'VPE_PROGRAMME_REVIEW',
+        action: String(parts[1] || ''),
+        periodKey: String(parts[2] || ''),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload.indexOf('MOVE_SPEECH_DATES|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'SPEAKER_MOVE_DATE_MENU',
+        meetingNo: Number(parts[1] || 0),
+        slotRef: String(parts[2] || ''),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload.indexOf('MOVE_SPEECH|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'SPEAKER_MOVE_SELECTION',
+        oldMeetingNo: Number(parts[1] || 0),
+        slotRef: String(parts[2] || ''),
+        newMeetingNo: Number(parts[3] || 0),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload.indexOf('EVAL_COORD|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'EVALUATOR_COORD_CHECK',
+        role: String(parts[1] || ''),
+        meetingNo: Number(parts[2] || 0),
+        answer: String(parts[3] || ''),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload.indexOf('INTRO_CHOICE|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'INTRO_CHOICE',
+        meetingNo: Number(parts[1] || 0),
+        related: String(parts[2] || ''),
+        choice: String(parts[3] || ''),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload === 'ADMIN_EXCEPTIONS') {
+      return {
+        kind: 'ADMIN_EXCEPTIONS',
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload === 'SPEECH_DATES') {
+      return {kind: 'SPEECH_DATE_MENU', text: String(message.button.text || '')};
+    }
+    if (payload.indexOf('SPEAK|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'SPEECH_SLOT_ACCEPT',
+        meetingNo: Number(parts[1]),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload.indexOf('ROLE_MENU|') === 0) {
+      const parts = payload.split('|');
+      return {
+        kind: 'ROLE_MENU',
+        meetingNo: Number(parts[1] || 0),
+        text: String(message.button.text || '')
+      };
+    }
+    if (payload === 'ROLE_MENU' ||
+        String(message.button.text || '').trim().toLowerCase() === 'view roles') {
+      return { kind: 'ROLE_MENU', meetingNo: 0, text: String(message.button.text || '') };
+    }
+  }
+
+  return {
+    kind: 'TEXT',
+    text: message.type === 'text' && message.text ? String(message.text.body || '') : ''
+  };
+}
+
+function handleRoleMenuRequest_(member, phone, requestedMeetingNo) {
+  if (!configBool_('ROLE_SELECTION_ENABLED')) {
+    sendWhatsAppText_(phone, 'Role selection is being prepared. It will be available here shortly.');
+    return;
+  }
+
+  // Controlled DEV bridge preview: after the approved View roles template is
+  // tapped, show the exact role list captured from the synced temporary row.
+  if (typeof apiDevTrySendPendingRolePreview_ === 'function') {
+    const previewResult = apiDevTrySendPendingRolePreview_(member, phone);
+    if (previewResult && (previewResult === true || previewResult.handled)) {
+      return;
+    }
+  }
+
+  if (Number(requestedMeetingNo)) {
+    const exactMeeting = findMeetingForRoleList_(Number(requestedMeetingNo), member);
+    if (!exactMeeting || !exactMeeting.available || !exactMeeting.available.length) {
+      sendWhatsAppText_(phone,
+        'There are no roles currently available for you in ATK Meeting ' +
+        requestedMeetingNo + '.');
+      return;
+    }
+    sendRoleList_(phone, member, exactMeeting);
+    return;
+  }
+
+  const meeting = findNextRoleSelectionMeeting_(member);
+  if (!meeting) {
+    sendWhatsAppText_(phone, 'There are no role vacancies currently available for you in the upcoming ATK meetings.');
+    return;
+  }
+
+  if (meeting.reason === 'SPEAKER') {
+    sendWhatsAppText_(phone,
+      'You are already listed as a speaker for Meeting ' + meeting.meetingNo +
+      ', so I have kept you out of the role-selection list for that meeting.');
+    return;
+  }
+
+  if (meeting.reason === 'ALREADY_ASSIGNED') {
+    sendWhatsAppText_(phone,
+      'You are already assigned as ' + meeting.assignedRole +
+      ' for Meeting ' + meeting.meetingNo + '.');
+    return;
+  }
+
+  sendRoleList_(phone, member, meeting);
+}
+
+function findNextRoleSelectionMeeting_(member) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('VPE Weekly Planner');
+  if (!sheet) throw new Error('VPE Weekly Planner not found.');
+
+  const windowDays = Math.max(1, Number(configValue_('ROLE_SELECTION_WINDOW_DAYS', '14')) || 14);
+  const today = startOfDay_(new Date());
+  const latest = new Date(today.getTime() + windowDays * 86400000);
+  const rowCount = Math.max(0, sheet.getLastRow() - 2);
+  const values = rowCount ? sheet.getRange(3, 1, rowCount, 28).getValues() : [];
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const meetingNo = Number(row[0]);
+    const meetingDate = row[1];
+    const status = String(row[2] || '');
+
+    if (!meetingNo || !(meetingDate instanceof Date)) continue;
+    if (!meetingAutomationEligible_(meetingNo)) continue;
+    const d = startOfDay_(meetingDate);
+    if (d < today || d > latest) continue;
+    if (status === 'Completed' || status === 'Cancelled') continue;
+
+    const speakers = [row[6], row[10], row[14]].map(v => String(v || '').trim()).filter(Boolean);
+    if (speakers.indexOf(member) !== -1) {
+      return { meetingNo, meetingDate, reason: 'SPEAKER' };
+    }
+
+    for (let r = 0; r < ROLE_DEFS_.length; r++) {
+      const assigned = String(row[ROLE_DEFS_[r].column - 1] || '').trim();
+      if (assigned === member) {
+        return {
+          meetingNo,
+          meetingDate,
+          reason: 'ALREADY_ASSIGNED',
+          assignedRole: ROLE_DEFS_[r].name
+        };
+      }
+    }
+
+    const available = availableRoleDefs_(row);
+    if (available.length) {
+      return { meetingNo, meetingDate, available, rowNumber: i + 3, reason: 'AVAILABLE' };
+    }
+  }
+
+  return null;
+}
+
+function sendRoleList_(phone, member, meeting) {
+  const rows = meeting.available.map(def => ({
+    id: 'ROLE|' + meeting.meetingNo + '|' + def.code,
+    title: def.name,
+    description: def.speakerName ? 'For ' + def.speakerName : 'Meeting ' + meeting.meetingNo
+  }));
+
+  const dateText = Utilities.formatDate(meeting.meetingDate, configValue_('TIMEZONE', 'Asia/Kolkata'), 'EEE, d MMM');
+  const body =
+    'ATK Meeting ' + meeting.meetingNo + ' · ' + dateText +
+    '\nChoose one of the roles still available below.';
+
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: phone,
+    type: 'interactive',
+    interactive: {
+      type: 'list',
+      body: { text: body },
+      action: {
+        button: 'Choose my role',
+        sections: [{
+          title: 'Available roles',
+          rows: rows
+        }]
+      }
+    }
+  };
+
+  const result = sendWhatsAppPayload_(payload);
+  logAutomation_('Role Selection', meeting.meetingNo, member, 'Role menu sent', result.ok ? 'Sent' : 'Error', result.messageId || result.error || '');
+  return result;
+}
+
+function handleRoleSelection_(member, phone, interaction) {
+  if (!configBool_('ROLE_SELECTION_ENABLED')) {
+    sendWhatsAppText_(phone, 'Role selection is currently unavailable.');
+    return;
+  }
+
+  // Final controlled WhatsApp golden-path test. When this exact short-lived
+  // DEV state is active, allow the real production booking/follow-up path below
+  // to run instead of the earlier preview/booking interceptors.
+  const devGoldenSelection =
+    typeof apiDevIsGoldenRoleSelection_ === 'function' &&
+    apiDevIsGoldenRoleSelection_(member, phone, interaction);
+
+  if (!devGoldenSelection) {
+    // Controlled DEV booking test uses the real reserveRole_ write, verifies it,
+    // cleans up, and prevents every downstream assignment workflow.
+    if (typeof apiDevHandleRoleBookingSelection_ === 'function' &&
+        apiDevHandleRoleBookingSelection_(member, phone, interaction)) {
+      return;
+    }
+
+    // Prevent the controlled DEV preview from booking anything or triggering
+    // assignment workflows if a preview role is tapped.
+    if (typeof apiDevHandleRolePreviewSelection_ === 'function' &&
+        apiDevHandleRolePreviewSelection_(member, phone, interaction)) {
+      return;
+    }
+  }
+
+  const roleDef = ROLE_DEFS_.find(r => r.code === interaction.roleCode);
+  if (!roleDef || !interaction.meetingNo) {
+    sendWhatsAppText_(phone, 'That role selection could not be understood. Please type ROLE to open the latest list.');
+    return;
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    sendWhatsAppText_(phone, 'Someone else is choosing a role at the same moment. Please type ROLE again in a few seconds.');
+    return;
+  }
+
+  try {
+    const result = reserveRole_(interaction.meetingNo, roleDef, member);
+
+    if (result.status === 'BOOKED') {
+      // Grammarian has its own two-message confirmation + copy/fill flow.
+      // Avoid a third, redundant generic confirmation message.
+      if (roleDef.code !== 'GRM') {
+        sendWhatsAppText_(phone,
+          'Confirmed ✅\n' + roleDef.name + (result.speakerName ? ' for ' + result.speakerName : '') +
+          ' · ATK Meeting ' + interaction.meetingNo +
+          ' · ' + result.dateText + '\n\nThank you, ' + member + '.');
+      }
+
+      logAutomation_('Role Selection', interaction.meetingNo, member,
+        'Role booked: ' + roleDef.name, 'Success', 'Planner row ' + result.rowNumber);
+
+      if (configBool_('TASK_ENGINE_ENABLED')) {
+        syncPhase1Tasks_();
+      }
+      if (roleDef.evaluatorSlot) processEvaluatorNotificationsForMeeting_(interaction.meetingNo);
+
+      sendImmediateAssignmentPrompts_(
+        interaction.meetingNo,
+        roleDef,
+        member,
+        phone
+      );
+
+      if (roleDef.code === 'TMOD' &&
+          typeof sendLateTmodCatchUp_ === 'function') {
+        sendLateTmodCatchUp_(interaction.meetingNo);
+      }
+
+      if (roleDef.code !== 'TMOD' && roleDef.code !== 'GRM') {
+        sendMeetingThemeToRole_(
+          interaction.meetingNo,
+          member,
+          roleDef.name,
+          phone
+        );
+      }
+
+      if (devGoldenSelection &&
+          typeof apiDevFinalizeGoldenRoleSelection_ === 'function') {
+        apiDevFinalizeGoldenRoleSelection_(
+          member,
+          phone,
+          interaction,
+          roleDef,
+          result
+        );
+      }
+      return;
+    }
+
+    if (result.status === 'ALREADY_ASSIGNED') {
+      sendWhatsAppText_(phone,
+        'You are already assigned as ' + result.assignedRole +
+        ' for Meeting ' + interaction.meetingNo + '.');
+      return;
+    }
+
+    if (result.status === 'SPEAKER') {
+      sendWhatsAppText_(phone,
+        'You are already listed as a speaker for Meeting ' + interaction.meetingNo +
+        ', so I have not added a role for the same meeting.');
+      return;
+    }
+
+    if (result.status === 'NO_SPEAKER') {
+      sendWhatsAppText_(phone, 'That evaluator slot no longer has a speaker. I will show the roles still available.');
+      const meeting = findMeetingForRoleList_(interaction.meetingNo, member);
+      if (meeting && meeting.available.length) sendRoleList_(phone, member, meeting);
+      return;
+    }
+
+    if (result.status === 'TAKEN') {
+      sendWhatsAppText_(phone,
+        roleDef.name + ' was just taken by another member. I will show you the roles that are still open.');
+      const meeting = findMeetingForRoleList_(interaction.meetingNo, member);
+      if (meeting && meeting.available.length) sendRoleList_(phone, member, meeting);
+      return;
+    }
+
+    sendWhatsAppText_(phone, 'That meeting is no longer available for role selection. Type ROLE to see the current options.');
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function reserveRole_(meetingNo, roleDef, member) {
+  if (!meetingAutomationEligible_(meetingNo)) return { status: 'NOT_AVAILABLE' };
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('VPE Weekly Planner');
+  const lastRow = sheet.getLastRow();
+  const rowCount = Math.max(0, lastRow - 2);
+  const meetingNos = rowCount
+    ? sheet.getRange(3, 1, rowCount, 1).getValues().flat()
+    : [];
+
+  const index = meetingNos.findIndex(v => Number(v) === Number(meetingNo));
+  if (index < 0) return { status: 'NOT_FOUND' };
+
+  const rowNumber = index + 3;
+  const row = sheet.getRange(rowNumber, 1, 1, 28).getValues()[0];
+  const status = String(row[2] || '');
+  if (status === 'Completed' || status === 'Cancelled') return { status: 'NOT_AVAILABLE' };
+
+  const speakers = [row[6], row[10], row[14]].map(v => String(v || '').trim());
+  if (speakers.indexOf(member) !== -1) return { status: 'SPEAKER' };
+  if (roleDef.evaluatorSlot && !speakers[roleDef.evaluatorSlot - 1]) {
+    return { status: 'NO_SPEAKER' };
+  }
+
+  for (let i = 0; i < ROLE_DEFS_.length; i++) {
+    const assigned = String(row[ROLE_DEFS_[i].column - 1] || '').trim();
+    if (assigned === member) {
+      return { status: 'ALREADY_ASSIGNED', assignedRole: ROLE_DEFS_[i].name };
+    }
+  }
+
+  const cell = sheet.getRange(rowNumber, roleDef.column);
+  const existing = String(cell.getValue() || '').trim();
+  if (existing) return { status: 'TAKEN', existing };
+
+  cell.setValue(member);
+  SpreadsheetApp.flush();
+
+  // Keep the API-backed UI model in sync with WhatsApp bookings. For legacy-only
+  // meetings there may be no API meeting yet; in that case the planner booking
+  // remains valid. If an API meeting exists, its matching role item is mandatory.
+  try {
+    syncBookedRoleToApiMeeting_(meetingNo, roleDef.code, member);
+  } catch (error) {
+    cell.clearContent();
+    SpreadsheetApp.flush();
+    throw error;
+  }
+
+  const dateText = row[1] instanceof Date
+    ? Utilities.formatDate(row[1], configValue_('TIMEZONE', 'Asia/Kolkata'), 'EEE, d MMM')
+    : String(row[1] || '');
+
+  return { status: 'BOOKED', rowNumber, dateText,
+    speakerName: roleDef.evaluatorSlot ? speakers[roleDef.evaluatorSlot - 1] : '' };
+}
+
+function syncBookedRoleToApiMeeting_(meetingNo, roleCode, memberName) {
+  if (typeof apiMirrorPlannerAssignmentToMeeting_ !== 'function') {
+    return {synced:false, reason:'API_HELPER_NOT_AVAILABLE'};
+  }
+  return apiMirrorPlannerAssignmentToMeeting_(
+    'ATK', meetingNo, roleCode, memberName
+  );
+}
+
+function findMeetingForRoleList_(meetingNo, member) {
+  if (!meetingAutomationEligible_(meetingNo)) return null;
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('VPE Weekly Planner');
+  const rowCount = Math.max(0, sheet.getLastRow() - 2);
+  const values = rowCount ? sheet.getRange(3, 1, rowCount, 28).getValues() : [];
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    if (Number(row[0]) !== Number(meetingNo)) continue;
+
+    const speakers = [row[6], row[10], row[14]].map(v => String(v || '').trim());
+    if (speakers.indexOf(member) !== -1) return null;
+
+    const memberHasRole = ROLE_DEFS_.some(def => String(row[def.column - 1] || '').trim() === member);
+    if (memberHasRole) return null;
+
+    return {
+      meetingNo: Number(row[0]),
+      meetingDate: row[1],
+      rowNumber: i + 3,
+      available: availableRoleDefs_(row)
+    };
+  }
+  return null;
+}
+
+function sendWhatsAppText_(phone, text) {
+  if (!phone) return { ok: false, error: 'Missing destination phone.' };
+
+  const payload = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to: normalizePhone_(phone),
+    type: 'text',
+    text: {
+      preview_url: false,
+      body: String(text || '')
+    }
+  };
+
+  return sendWhatsAppPayload_(payload);
+}
+
+function sendWhatsAppPayload_(payload) {
+  const destination = normalizePhone_(payload && payload.to ? payload.to : '');
+
+  // Same-invocation DEV self-test capture. This is never persisted and therefore
+  // cannot affect scheduled or webhook executions in other Apps Script runs.
+  if (Array.isArray(DEV_OUTBOUND_CAPTURE_)) {
+    DEV_OUTBOUND_CAPTURE_.push(JSON.parse(JSON.stringify(payload || {})));
+    return {
+      ok: true,
+      status: 299,
+      messageId: 'DEV_CAPTURE_' + (DEV_OUTBOUND_CAPTURE_.length),
+      captured: true
+    };
+  }
+
+  const sendMode = String(configValue_('WA_SEND_MODE', 'TEST')).toUpperCase();
+
+  if (sendMode !== 'LIVE') {
+    const allowlist = String(configValue_('WA_TEST_RECIPIENTS', ''))
+      .split(',')
+      .map(v => normalizePhone_(v))
+      .filter(Boolean);
+
+    if (!destination || allowlist.indexOf(destination) === -1) {
+      logAutomation_(
+        'WhatsApp',
+        '',
+        destination,
+        'DEV outbound blocked by test-recipient allowlist',
+        'Blocked',
+        sendMode
+      );
+      return {
+        ok: false,
+        blocked: true,
+        error: 'DEV outbound blocked by WA_TEST_RECIPIENTS.'
+      };
+    }
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  const token = props.getProperty('META_ACCESS_TOKEN');
+  const phoneNumberId = props.getProperty('WA_PHONE_NUMBER_ID');
+
+  if (!token || !phoneNumberId) {
+    throw new Error('WhatsApp Script Properties are incomplete.');
+  }
+
+  const url = 'https://graph.facebook.com/v26.0/' +
+    encodeURIComponent(phoneNumberId) + '/messages';
+
+  const response = UrlFetchApp.fetch(url, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: {
+      Authorization: 'Bearer ' + token
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  const status = response.getResponseCode();
+  const body = response.getContentText();
+  let parsed = {};
+  try { parsed = JSON.parse(body); } catch (ignore) {}
+
+  const messageId = parsed.messages && parsed.messages[0] && parsed.messages[0].id
+    ? parsed.messages[0].id : '';
+
+  if (status >= 200 && status < 300) {
+    return { ok: true, status, messageId, body };
+  }
+
+  const errorText = parsed.error && parsed.error.message ? parsed.error.message : body;
+  logAutomation_('WhatsApp', '', normalizePhone_(payload.to || ''), 'Outbound send failed', 'Error', 'HTTP ' + status + ': ' + errorText);
+  return { ok: false, status, error: errorText, body };
+}
+
+function updateOutboxDeliveryStatus_(status) {
+  const id = String(status.id || '');
+  if (!id) return;
+
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('WA Outbox');
+  if (!sheet || sheet.getLastRow() < 2) return;
+
+  const ids = sheet.getRange(2, 10, sheet.getLastRow() - 1, 1).getValues().flat();
+  const idx = ids.findIndex(v => String(v || '') === id);
+  if (idx < 0) return;
+
+  const row = idx + 2;
+  const next = String(status.status || '').toUpperCase();
+  if (!next) return;
+
+  // Meta status webhooks can arrive out of order. Never downgrade a message
+  // that was already delivered or read when a delayed SENT receipt arrives.
+  const cell = sheet.getRange(row, 7);
+  const current = String(cell.getValue() || '').toUpperCase();
+  const rank = { SENT: 1, DELIVERED: 2, READ: 3 };
+  if (rank[next] && rank[current] && rank[next] < rank[current]) return;
+  if (next === 'FAILED' && (current === 'DELIVERED' || current === 'READ')) return;
+  if (next === 'SENT' && current === 'FAILED') return;
+  cell.setValue(next);
+}
+
+function isDuplicateWebhookMessage_(messageId) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('WA Webhook Log');
+  if (!sheet || sheet.getLastRow() < 2) return false;
+
+  const values = sheet.getRange(2, 5, sheet.getLastRow() - 1, 1).getValues().flat();
+  let count = 0;
+  for (let i = 0; i < values.length; i++) {
+    if (String(values[i] || '') === messageId) count++;
+    if (count > 1) return true;
+  }
+  return false;
+}
+
+let CONFIG_CACHE_ = null;
+
+function getConfigMap_() {
+  if (CONFIG_CACHE_) return CONFIG_CACHE_;
+
+  const map = {};
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = ss.getSheetByName('Automation Config');
+
+  if (sheet && sheet.getLastRow() >= 2) {
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+    rows.forEach(row => {
+      const key = String(row[0] || '').trim();
+      if (key) map[key] = row[1];
+    });
+  }
+
+  CONFIG_CACHE_ = map;
+  return CONFIG_CACHE_;
+}
+
+function configValue_(key, fallback) {
+  const map = getConfigMap_();
+  if (!Object.prototype.hasOwnProperty.call(map, key)) return fallback;
+
+  const value = map[key];
+  return value === '' || value === null ? fallback : String(value);
+}
+
+function configBool_(key) {
+  return String(configValue_(key, 'FALSE')).toUpperCase() === 'TRUE';
+}
+
+function normalizePhone_(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+function startOfDay_(date) {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function logAutomation_(module, meetingNo, memberOrItem, action, result, notes) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName('Automation Log');
+    if (!sheet) return;
+
+    sheet.appendRow([
+      new Date(),
+      module || '',
+      meetingNo || '',
+      memberOrItem || '',
+      action || '',
+      result || '',
+      notes || ''
+    ]);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+/**
+ * DEV diagnostic only. Does not send messages or change assignments.
+ */
+function phase1Diagnostic() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const requiredSheets = [
+    'VPE Weekly Planner',
+    'Member Master',
+    'Automation Config',
+    'Automation Tasks',
+    'WA Outbox',
+    'WA Submissions',
+    'WA Webhook Log',
+    'Automation Log'
+  ];
+
+  const missingSheets = requiredSheets.filter(name => !ss.getSheetByName(name));
+  const props = PropertiesService.getScriptProperties();
+
+  const result = {
+    spreadsheetId: SPREADSHEET_ID,
+    systemMode: configValue_('SYSTEM_MODE', ''),
+    roleSelectionEnabled: configBool_('ROLE_SELECTION_ENABLED'),
+    missingSheets: missingSheets,
+    metaTokenPresent: Boolean(props.getProperty('META_ACCESS_TOKEN')),
+    phoneNumberIdPresent: Boolean(props.getProperty('WA_PHONE_NUMBER_ID')),
+    wabaIdPresent: Boolean(props.getProperty('WA_WABA_ID')),
+    nextRoleMeetingForVpe: findNextRoleSelectionMeeting_(configValue_('VPE_MEMBER_NAME', 'Riyas AF'))
+  };
+
+  console.log(JSON.stringify(result));
+  return result;
+}

@@ -1,0 +1,169 @@
+# Planner/API lifecycle, WhatsApp mirror and activation rollback regression gate.
+# Retriggered 2026-10-13 after lifecycle sync implementation.
+name: DEV Safe Regression
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/dev-regression-only.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: atk-vpe-dev
+  cancel-in-progress: false
+
+env:
+  ATK_DEV_SCRIPT_ID: 1LS3HabXjXOainAMiNLVVlRX5LEaA-o5Y7Kf31Fg-JQJZsR4ZKHI5zHUN
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Validate JavaScript
+        shell: bash
+        run: |
+          files=$(find . -maxdepth 1 -type f -name '*.js' -print)
+          test -n "$files"
+          while IFS= read -r file; do
+            node --check "$file"
+          done <<< "$files"
+
+      - name: Install clasp
+        run: npm install --global @google/clasp@3.4.1
+
+      - name: Configure clasp authentication
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw=os.environ.get('CLASPRC_JSON','').strip()
+          start=raw.find('{'); end=raw.rfind('}')
+          if start < 0 or end < start:
+              raise SystemExit('CLASPRC_JSON does not contain a JSON object.')
+          parsed=json.loads(raw[start:end+1])
+          target=Path.home()/'.clasprc.json'
+          target.write_text(json.dumps(parsed))
+          target.chmod(0o600)
+          PY
+
+      - name: Verify DEV target
+        shell: bash
+        run: |
+          grep -q "$ATK_DEV_SCRIPT_ID" .clasp.json
+
+      - name: Prepare Google OAuth access token
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, time, urllib.parse, urllib.request
+          from pathlib import Path
+
+          data=json.loads((Path.home()/'.clasprc.json').read_text())
+          cred=None
+          tokens=data.get('tokens') or {}
+          if isinstance(tokens,dict):
+              cred=tokens.get('default')
+              if not cred:
+                  cred=next((v for v in tokens.values() if isinstance(v,dict)),None)
+          if not cred and isinstance(data.get('token'),dict):
+              cred=dict(data['token'])
+              settings=data.get('oauth2ClientSettings') or {}
+              cred.setdefault('client_id',settings.get('clientId'))
+              cred.setdefault('client_secret',settings.get('clientSecret'))
+          if not cred:
+              cred=data
+
+          token=cred.get('access_token')
+          expiry=int(cred.get('expiry_date') or cred.get('exprity_date') or 0)
+          if not token or (expiry and expiry <= int(time.time()*1000)+60000):
+              refresh=cred.get('refresh_token')
+              client_id=cred.get('client_id')
+              client_secret=cred.get('client_secret')
+              if not (refresh and client_id and client_secret):
+                  raise SystemExit('No refreshable Google OAuth credential found.')
+              body=urllib.parse.urlencode({
+                  'client_id':client_id,
+                  'client_secret':client_secret,
+                  'refresh_token':refresh,
+                  'grant_type':'refresh_token'
+              }).encode()
+              req=urllib.request.Request(
+                  'https://oauth2.googleapis.com/token',
+                  data=body,
+                  headers={'Content-Type':'application/x-www-form-urlencoded'}
+              )
+              with urllib.request.urlopen(req,timeout=30) as resp:
+                  token=json.loads(resp.read().decode())['access_token']
+
+          p=Path('/tmp/google_access_token')
+          p.write_text(token)
+          p.chmod(0o600)
+          PY
+
+      - name: Run master regression without WhatsApp
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          source=Path('.github/workflows/dev-golden-path.yml').read_text()
+          match=re.search(r'"verify_token":"([^"]+)"', source)
+          if not match:
+              raise SystemExit('Existing DEV verification token reference not found.')
+          p=Path('/tmp/dev_verify_token')
+          p.write_text(match.group(1))
+          p.chmod(0o600)
+          PY
+
+          token=$(cat /tmp/google_access_token)
+          verify=$(cat /tmp/dev_verify_token)
+
+          for suffix in dev exec; do
+            code=$(curl --location --silent --show-error \
+              --max-time 330 \
+              --output /tmp/master.json \
+              --write-out '%{http_code}' \
+              --header "Authorization: Bearer $token" \
+              --header 'Content-Type: application/json' \
+              --data "{\"system_action\":\"DEV_MASTER_REGRESSION\",\"verify_token\":\"$verify\"}" \
+              "https://script.google.com/macros/s/AKfycbzpNOaOrEtEliLxcCIu9m4hSVhAq-2Tg2pL2tqQztM/$suffix")
+            if [ "$code" = "200" ]; then
+              break
+            fi
+          done
+
+          test "$code" = "200"
+          cat /tmp/master.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('/tmp/master.json').read_text())
+          assert report.get('ok') is True, report
+          grammar=report.get('grammarian_parser',{})
+          assert grammar.get('ok') is True, report
+          assert grammar.get('checks_passed') == grammar.get('checks_total') == 4, report
+          lifecycle=report.get('planner_api_lifecycle',{})
+          assert lifecycle.get('ok') is True, report
+          assert lifecycle.get('checks_passed') == lifecycle.get('checks_total') == 10, report
+          assert report.get('core',{}).get('ok') is True, report
+          assert report.get('configured_workflows',{}).get('ok') is True, report
+          assert report.get('forced_enabled_workflows',{}).get('ok') is True, report
+          print('SAFE_MASTER_REGRESSION_OK')
+          PY
+# Activation kickoff verification 2026-10-13
