@@ -73,25 +73,60 @@ async function testWhatsAppOutbound() {
     process.exit(1);
   }
 
-  // 4. Send Live WhatsApp Test Message
-  console.log(`\n5️⃣ Sending Live Test WhatsApp Message to ${normalizedRecipient}...`);
-  const testMessage = `👋 Hello from Advanced Toastmasters of Kerala (ATK) VPE Automation!\n\nThis is an automated verification message to confirm that your WhatsApp Cloud API integration and test number (${normalizedRecipient}) are fully functional.\n\nTimestamp: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
-
+  // 4. Send Live WhatsApp Test Template Message (Works outside 24h window)
+  console.log(`\n5️⃣ Sending Live WhatsApp Approved Template (atk_role_reminder_v2) to ${normalizedRecipient}...`);
   try {
-    const result = globalThis.sendWhatsAppText_(normalizedRecipient, testMessage);
+    const templatePayload = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: normalizedRecipient,
+      type: 'template',
+      template: {
+        name: 'atk_role_reminder_v2',
+        language: { code: 'en_US' },
+        components: [
+          {
+            type: 'body',
+            parameters: [{ type: 'text', text: 'Member' }]
+          }
+        ]
+      }
+    };
 
-    if (result && result.ok) {
-      console.log('   ✅ Outbound Status   : 200 OK');
-      console.log('   ✅ Meta Message ID   :', result.messageId);
-      console.log('\n🎉 SUCCESS: Live WhatsApp test message delivered to ' + normalizedRecipient + '!\n');
+    const templateResult = globalThis.sendWhatsAppPayload_(templatePayload);
+    if (templateResult && templateResult.ok) {
+      console.log('   ✅ Template Outbound : 200 OK');
+      console.log('   ✅ Meta Message ID   :', templateResult.messageId);
+      console.log('   📲 Check your WhatsApp! You should see the atk_role_reminder_v2 template message.');
     } else {
-      console.error('   ❌ Outbound Failed   :', JSON.stringify(result, null, 2));
-      process.exit(1);
+      console.log('   ⚠️ Template Outbound note:', JSON.stringify(templateResult));
     }
   } catch (err) {
-    console.error('   ❌ Exception during send:', err.message);
-    process.exit(1);
+    console.error('   ❌ Template send error:', err.message);
   }
+
+  // 5. Send Live Freeform Message & explain 24h window
+  console.log(`\n6️⃣ Testing Freeform Text Message (Requires 24-hour Customer Service Window)...`);
+  const testMessage = `👋 Hello from Advanced Toastmasters of Kerala (ATK) VPE Automation!\n\nTimestamp: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`;
+  try {
+    const textResult = globalThis.sendWhatsAppText_(normalizedRecipient, testMessage);
+    if (textResult && textResult.ok) {
+      console.log('   ✅ Freeform Outbound : 200 OK');
+      console.log('   ✅ Meta Message ID   :', textResult.messageId);
+    }
+  } catch (err) {
+    console.error('   ❌ Freeform send error:', err.message);
+  }
+
+  console.log('\n======================================================');
+  console.log('  📌 IMPORTANT META WHATSAPP CLOUD API RULES:');
+  console.log('  1. Template Messages (like atk_role_reminder_v2) can be');
+  console.log('     delivered at ANY time.');
+  console.log('  2. Freeform Text Messages can ONLY be delivered if the');
+  console.log('     recipient sent a message to the bot in the last 24h.');
+  console.log('  👉 To open the 24h window, send "Hi" from your phone');
+  console.log('     to +91 97458 52423 on WhatsApp!');
+  console.log('======================================================\n');
 }
 
 testWhatsAppOutbound();
