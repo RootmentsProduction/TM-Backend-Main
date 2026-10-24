@@ -1,6 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const { seedDefaultSpreadsheet } = require('./seedData');
+let syncSheetToMongo;
+let loadSheetsFromMongo;
+try {
+  ({ syncSheetToMongo, loadSheetsFromMongo } = require('../db/adapter'));
+} catch (e) {
+  // Database adapter optional
+}
 
 function isCellEmpty(val) {
   return val === null || val === undefined || val === '';
@@ -310,6 +317,25 @@ class Spreadsheet {
     }
   }
 
+  async loadFromMongo() {
+    try {
+      if (typeof loadSheetsFromMongo !== 'function') return false;
+      const mongoSheets = await loadSheetsFromMongo(this._id);
+      if (mongoSheets && Object.keys(mongoSheets).length > 0) {
+        this._sheets.clear();
+        for (const [name, rows] of Object.entries(mongoSheets)) {
+          const sheet = new Sheet(this, name);
+          sheet._grid = rows;
+          this._sheets.set(name, sheet);
+        }
+        return true;
+      }
+    } catch (e) {
+      console.warn('[MongoDB] loadFromMongo warning:', e.message);
+    }
+    return false;
+  }
+
   flush() {
     if (!this._dirty) return;
     try {
@@ -318,9 +344,14 @@ class Spreadsheet {
       }
       const data = { sheets: {} };
       for (const [name, sheet] of this._sheets.entries()) {
-        data.sheets[name] = sheet._grid.map(row =>
+        const grid = sheet._grid.map(row =>
           row.map(cell => (cell instanceof Date ? cell.toISOString() : cell))
         );
+        data.sheets[name] = grid;
+
+        if (typeof syncSheetToMongo === 'function') {
+          syncSheetToMongo(this._id, name, grid).catch(() => {});
+        }
       }
       fs.writeFileSync(this._filePath, JSON.stringify(data, null, 2), 'utf8');
       this._dirty = false;
@@ -377,6 +408,11 @@ class SpreadsheetApp {
   static getActiveSpreadsheet() {
     const defaultId = process.env.SPREADSHEET_ID || '1qZnZov1l9DfvhTzruqlLubGhydcOOFKLf2kG8xplNLM';
     return SpreadsheetApp.openById(defaultId);
+  }
+
+  static async loadActiveFromMongo() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    return await ss.loadFromMongo();
   }
 
   static flush() {

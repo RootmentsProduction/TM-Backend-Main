@@ -1,11 +1,27 @@
+// ATK VPE Automation Server (Node.js / Express / MongoDB Atlas)
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const { connectMongoDB, getMongoStatus } = require('./db/connection');
+const { Member, Meeting, Task, Outbox } = require('./db/models');
 
 // Initialize Google Apps Script Compatibility Layer
 require('./compat');
+
+// Attempt MongoDB connection and load data directly from MongoDB Atlas
+connectMongoDB().then(async (conn) => {
+  if (conn) {
+    const { SpreadsheetApp } = require('./compat/SpreadsheetApp');
+    const loaded = await SpreadsheetApp.loadActiveFromMongo();
+    if (loaded) {
+      console.log('[MongoDB] All club collections loaded directly from MongoDB Atlas.');
+    }
+  }
+}).catch(err => {
+  console.warn('[MongoDB] Init connection warning:', err.message);
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -34,13 +50,19 @@ app.get('/', (req, res) => {
     service: 'ATK VPE Automation Engine',
     platform: 'Node.js / Express (MERN Stack)',
     version: '1.0.0',
+    mongodb: getMongoStatus(),
     system_mode: globalThis.configValue_ ? globalThis.configValue_('SYSTEM_MODE', 'DEV') : 'DEV',
     timezone: globalThis.configValue_ ? globalThis.configValue_('TIMEZONE', 'Asia/Kolkata') : 'Asia/Kolkata'
   });
 });
 
 app.get('/health', (req, res) => {
-  res.json({ ok: true, uptime: process.uptime(), timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    mongodb: getMongoStatus(),
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Meta Webhook Verification (doGet)
@@ -94,6 +116,47 @@ app.post('/api/v1', (req, res) => {
   } catch (err) {
     console.error('Error in POST /api/v1:', err);
     res.status(500).json({ data: null, error: { message: err.message } });
+  }
+});
+
+// Pure MongoDB REST API Endpoints (MERN Stack)
+app.get('/api/members', async (req, res) => {
+  try {
+    const members = await Member.find().sort({ memberId: 1 }).lean();
+    res.json({ ok: true, count: members.length, data: members });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/meetings', async (req, res) => {
+  try {
+    const filter = {};
+    if (req.query.status) filter.status = req.query.status;
+    const meetings = await Meeting.find(filter).sort({ meetingNo: 1 }).lean();
+    res.json({ ok: true, count: meetings.length, data: meetings });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/tasks', async (req, res) => {
+  try {
+    const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
+    const tasks = await Task.find().sort({ createdAt: -1 }).limit(limit).lean();
+    res.json({ ok: true, count: tasks.length, data: tasks });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/outbox', async (req, res) => {
+  try {
+    const limit = Math.min(100, parseInt(req.query.limit || '50', 10));
+    const messages = await Outbox.find().sort({ timestamp: -1 }).limit(limit).lean();
+    res.json({ ok: true, count: messages.length, data: messages });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 

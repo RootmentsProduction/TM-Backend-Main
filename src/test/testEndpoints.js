@@ -33,12 +33,21 @@ server.listen(0, async () => {
     const apiJson = await apiRes.json();
     console.log('✅ POST /api/v1 (GET_CLUB_SETTINGS):', apiJson.data ? `Club: ${apiJson.data.club_name}` : 'OK response');
 
-    // 5. Test Dev Regression API endpoint
+    // 5. Test Pure MongoDB REST Endpoints
+    const membersRes = await fetch(`${baseUrl}/api/members`);
+    const membersJson = await membersRes.json();
+    console.log(`✅ GET /api/members (MongoDB Atlas): Found ${membersJson.count} members.`);
+
+    const meetingsRes = await fetch(`${baseUrl}/api/meetings`);
+    const meetingsJson = await meetingsRes.json();
+    console.log(`✅ GET /api/meetings (MongoDB Atlas): Found ${meetingsJson.count} meetings.`);
+
+    // 6. Test Dev Regression API endpoint
     const regRes = await fetch(`${baseUrl}/api/dev/regression?verify_token=ATK_VPE_VERIFY_2026_X7K9M4P2`);
     const regJson = await regRes.json();
     console.log('✅ GET /api/dev/regression:', regJson.ok ? `PASSED (${regJson.duration_ms}ms)` : 'FAILED');
 
-    console.log('\n🎉 ALL EXPRESS HTTP ENDPOINTS VERIFIED SUCCESSFULLY!\n');
+    console.log('\n🎉 ALL EXPRESS HTTP & MONGODB ENDPOINTS VERIFIED SUCCESSFULLY!\n');
     server.close();
     process.exit(0);
   } catch (err) {

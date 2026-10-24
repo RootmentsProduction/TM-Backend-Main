@@ -956,6 +956,9 @@ function getConfigMap_() {
 }
 
 function configValue_(key, fallback) {
+  if (typeof process !== 'undefined' && process.env && process.env[key] !== undefined && process.env[key] !== '') {
+    return String(process.env[key]);
+  }
   const map = getConfigMap_();
   if (!Object.prototype.hasOwnProperty.call(map, key)) return fallback;
 
@@ -968,7 +971,14 @@ function configBool_(key) {
 }
 
 function normalizePhone_(phone) {
-  return String(phone || '').replace(/\D/g, '');
+  let digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1);
+  }
+  if (digits.length === 10) {
+    return '91' + digits;
+  }
+  return digits;
 }
 
 function startOfDay_(date) {
