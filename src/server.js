@@ -109,13 +109,17 @@ app.post('/api/v1', (req, res) => {
   try {
     const payload = Object.assign({ api_version: 'v1' }, req.body);
     const result = globalThis.apiHandleRequest_(payload);
-    res.status(result.status || 200).json({
+    const statusCode = result.status || 200;
+    const isOk = statusCode >= 200 && statusCode < 300;
+    res.status(statusCode).json({
+      ok: isOk,
+      status: statusCode,
       data: result.data || null,
       error: result.error || null
     });
   } catch (err) {
     console.error('Error in POST /api/v1:', err);
-    res.status(500).json({ data: null, error: { message: err.message } });
+    res.status(500).json({ ok: false, status: 500, data: null, error: { message: err.message } });
   }
 });
 

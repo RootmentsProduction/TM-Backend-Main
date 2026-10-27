@@ -6,6 +6,7 @@ const Submission = require('./Submission');
 const AutomationConfig = require('./Config');
 const SheetStore = require('./SheetStore');
 const Attendance = require('./Attendance');
+const Otp = require('./Otp');
 
 module.exports = {
   Member,
@@ -15,5 +16,6 @@ module.exports = {
   Submission,
   AutomationConfig,
   SheetStore,
-  Attendance
+  Attendance,
+  Otp
 };

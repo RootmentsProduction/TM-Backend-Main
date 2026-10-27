@@ -20,6 +20,9 @@ globalThis.LockService = LockService;
 globalThis.CacheService = CacheService;
 globalThis.UrlFetchApp = UrlFetchApp;
 globalThis.SpreadsheetApp = SpreadsheetApp;
+try {
+  globalThis.jwt = require('jsonwebtoken');
+} catch (e) {}
 
 const SCRIPT_FILES = [
   'Code.js',
