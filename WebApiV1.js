@@ -164,6 +164,10 @@ function apiHandleRequest_(payload) {
         return {status:200,data:apiDashboard_(clubId)};
       case 'meeting.activate':
         return {status:200,data:apiActivateMeeting_(clubId,String(payload.meeting_id || ''))};
+      case 'meeting.attendance.save':
+        return {status:200,data:apiSaveAttendance_(clubId,payload)};
+      case 'meeting.attendance.get':
+        return {status:200,data:apiGetAttendance_(clubId,payload)};
       default:
         return {status:404,error:{code:'UNKNOWN_ACTION',message:'Unknown API action: '+action}};
     }
@@ -4263,4 +4267,130 @@ function apiDevGoldenPathResult() {
   }
   console.log(JSON.stringify(result,null,2));
   return result;
+}
+
+// ── Attendance API ──────────────────────────────────────────────────────────
+
+const API_ATTENDANCE_SHEET_ = 'API Attendance';
+
+function apiEnsureAttendanceSheet_() {
+  const ss = apiSpreadsheet_();
+  let sh = ss.getSheetByName(API_ATTENDANCE_SHEET_);
+  if (!sh) {
+    sh = ss.insertSheet(API_ATTENDANCE_SHEET_);
+    sh.appendRow(['Meeting ID','Club ID','Member ID','Name','Status','Updated At']);
+    sh.hideSheet();
+  }
+  return sh;
+}
+
+/**
+ * Action: meeting.attendance.save
+ * Upserts attendance records for a given meeting.
+ */
+function apiSaveAttendance_(clubId,payload) {
+  const meetingId = String(payload.meeting_id || '').trim();
+  if (!meetingId) {
+    const e = new Error('Missing required field: meeting_id');
+    e.apiCode='BAD_REQUEST'; throw e;
+  }
+  const attendance = payload.attendance;
+  if (!Array.isArray(attendance) || attendance.length === 0) {
+    const e = new Error('Missing required field: attendance (must be a non-empty array)');
+    e.apiCode='BAD_REQUEST'; throw e;
+  }
+
+  const VALID_STATUSES = ['present','absent','excused'];
+  for (var i = 0; i < attendance.length; i++) {
+    var rec = attendance[i];
+    if (!rec.member_id) {
+      var e1 = new Error('attendance['+i+'].member_id is required');
+      e1.apiCode='BAD_REQUEST'; throw e1;
+    }
+    if (!rec.name) {
+      var e2 = new Error('attendance['+i+'].name is required');
+      e2.apiCode='BAD_REQUEST'; throw e2;
+    }
+    var st = String(rec.status || '').trim().toLowerCase();
+    if (VALID_STATUSES.indexOf(st) < 0) {
+      var e3 = new Error('attendance['+i+'].status must be one of: '+VALID_STATUSES.join(', '));
+      e3.apiCode='BAD_REQUEST'; throw e3;
+    }
+    rec.status = st;
+  }
+
+  var sh = apiEnsureAttendanceSheet_();
+  var lastRow = sh.getLastRow();
+
+  // Remove existing rows for this meeting + club (upsert)
+  if (lastRow >= 2) {
+    var rows = sh.getRange(2,1,lastRow-1,6).getValues();
+    // Delete from bottom up to preserve row indices
+    for (var r = rows.length - 1; r >= 0; r--) {
+      if (String(rows[r][0]) === meetingId && String(rows[r][1]) === clubId) {
+        sh.deleteRow(r + 2);
+      }
+    }
+  }
+
+  // Write new attendance rows
+  var now = new Date().toISOString();
+  var newRows = [];
+  var presentCount = 0, absentCount = 0, excusedCount = 0;
+  for (var j = 0; j < attendance.length; j++) {
+    var a = attendance[j];
+    newRows.push([meetingId, clubId, String(a.member_id), String(a.name), a.status, now]);
+    if (a.status === 'present') presentCount++;
+    else if (a.status === 'absent') absentCount++;
+    else if (a.status === 'excused') excusedCount++;
+  }
+  if (newRows.length > 0) {
+    sh.getRange(sh.getLastRow()+1,1,newRows.length,6).setValues(newRows);
+  }
+
+  // Invalidate any attendance-specific cache
+  apiCacheRemove_([apiCacheKey_('attendance',clubId,meetingId)]);
+
+  return {
+    meeting_id: meetingId,
+    total_marked: attendance.length,
+    present_count: presentCount,
+    absent_count: absentCount,
+    excused_count: excusedCount,
+    updated_at: now
+  };
+}
+
+/**
+ * Action: meeting.attendance.get
+ * Retrieves attendance for a meeting. Returns empty array if none marked.
+ */
+function apiGetAttendance_(clubId,payload) {
+  var meetingId = String(payload.meeting_id || '').trim();
+  if (!meetingId) {
+    var e = new Error('Missing required field: meeting_id');
+    e.apiCode='BAD_REQUEST'; throw e;
+  }
+
+  var sh = apiEnsureAttendanceSheet_();
+  var lastRow = sh.getLastRow();
+  var result = [];
+
+  if (lastRow >= 2) {
+    var rows = sh.getRange(2,1,lastRow-1,6).getValues();
+    for (var i = 0; i < rows.length; i++) {
+      if (String(rows[i][0]) === meetingId && String(rows[i][1]) === clubId) {
+        result.push({
+          member_id: String(rows[i][2]),
+          name: String(rows[i][3]),
+          status: String(rows[i][4])
+        });
+      }
+    }
+  }
+
+  return {
+    meeting_id: meetingId,
+    attendance: result
+  };
 }

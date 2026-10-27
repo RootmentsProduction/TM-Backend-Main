@@ -5,6 +5,7 @@ const Outbox = require('./Outbox');
 const Submission = require('./Submission');
 const AutomationConfig = require('./Config');
 const SheetStore = require('./SheetStore');
+const Attendance = require('./Attendance');
 
 module.exports = {
   Member,
@@ -13,5 +14,6 @@ module.exports = {
   Outbox,
   Submission,
   AutomationConfig,
-  SheetStore
+  SheetStore,
+  Attendance
 };

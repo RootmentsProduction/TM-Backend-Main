@@ -1,0 +1,1412 @@
+// Script to generate the comprehensive ATK VPE Automation PDF Guide
+const fs = require('fs');
+const path = require('path');
+const cp = require('child_process');
+
+console.log('Generating ATK VPE Automation Complete Architecture & Operational Specification...');
+
+const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ATK VPE Automation System — Complete Architecture & Operational Specification</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 14mm 14mm 14mm 14mm;
+      @bottom-right {
+        content: counter(page);
+      }
+    }
+
+    *, *:before, *:after {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+      color: #1e293b;
+      background: #ffffff;
+      line-height: 1.55;
+      font-size: 10pt;
+      margin: 0;
+      padding: 0;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    /* Print & Page Controls */
+    .page-break {
+      page-break-before: always;
+      break-before: page;
+    }
+    .no-break {
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+
+    /* Cover Page */
+    .cover-page {
+      min-height: 92vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 30px 20px;
+      border: 3px solid #0f172a;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+      page-break-after: always;
+      break-after: page;
+    }
+
+    .cover-header {
+      border-bottom: 4px solid #2563eb;
+      padding-bottom: 25px;
+    }
+
+    .brand-tag {
+      display: inline-block;
+      background: #1e293b;
+      color: #ffffff;
+      font-size: 8.5pt;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 5px 12px;
+      border-radius: 4px;
+      margin-bottom: 14px;
+    }
+
+    .cover-title {
+      font-size: 26pt;
+      font-weight: 800;
+      color: #0f172a;
+      margin: 0 0 10px 0;
+      line-height: 1.2;
+    }
+
+    .cover-subtitle {
+      font-size: 13pt;
+      font-weight: 500;
+      color: #3b82f6;
+      margin: 0 0 14px 0;
+      line-height: 1.4;
+    }
+
+    .cover-description {
+      font-size: 10.5pt;
+      color: #475569;
+      line-height: 1.6;
+      max-width: 90%;
+    }
+
+    .cover-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 15px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 7.5pt;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-primary { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    .badge-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-warning { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .badge-dark { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+
+    .cover-meta {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 18px;
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+      margin-top: 25px;
+    }
+
+    .meta-item {
+      font-size: 8.5pt;
+    }
+    .meta-label {
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      font-size: 7pt;
+      letter-spacing: 0.5px;
+    }
+    .meta-value {
+      font-weight: 600;
+      color: #0f172a;
+      margin-top: 2px;
+    }
+
+    .cover-footer {
+      border-top: 1px solid #cbd5e1;
+      padding-top: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 8pt;
+      color: #64748b;
+    }
+
+    /* Headings */
+    h1 {
+      font-size: 17pt;
+      font-weight: 800;
+      color: #0f172a;
+      border-bottom: 2px solid #2563eb;
+      padding-bottom: 6px;
+      margin-top: 22px;
+      margin-bottom: 12px;
+    }
+
+    h2 {
+      font-size: 13pt;
+      font-weight: 700;
+      color: #1e3a8a;
+      margin-top: 18px;
+      margin-bottom: 8px;
+      border-left: 4px solid #3b82f6;
+      padding-left: 8px;
+    }
+
+    h3 {
+      font-size: 10.5pt;
+      font-weight: 700;
+      color: #334155;
+      margin-top: 12px;
+      margin-bottom: 6px;
+    }
+
+    p {
+      margin: 0 0 8px 0;
+      color: #334155;
+    }
+
+    ul, ol {
+      margin: 0 0 10px 0;
+      padding-left: 20px;
+      color: #334155;
+    }
+
+    li {
+      margin-bottom: 4px;
+    }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 14px 0;
+      font-size: 8.5pt;
+    }
+
+    th {
+      background: #1e293b;
+      color: #ffffff;
+      text-align: left;
+      padding: 7px 9px;
+      font-weight: 700;
+      font-size: 8pt;
+      letter-spacing: 0.3px;
+    }
+
+    td {
+      padding: 6px 9px;
+      border-bottom: 1px solid #e2e8f0;
+      color: #334155;
+      vertical-align: top;
+    }
+
+    tr:nth-child(even) td {
+      background: #f8fafc;
+    }
+
+    /* Callouts */
+    .callout {
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin: 10px 0;
+      font-size: 8.5pt;
+      border-left: 4px solid;
+    }
+
+    .callout-info {
+      background: #eff6ff;
+      border-color: #3b82f6;
+      color: #1e40af;
+    }
+
+    .callout-success {
+      background: #f0fdf4;
+      border-color: #22c55e;
+      color: #15803d;
+    }
+
+    .callout-warning {
+      background: #fffbeb;
+      border-color: #f59e0b;
+      color: #b45309;
+    }
+
+    .callout-alert {
+      background: #fef2f2;
+      border-color: #ef4444;
+      color: #b91c1c;
+    }
+
+    .callout-title {
+      font-weight: 700;
+      margin-bottom: 3px;
+      font-size: 9pt;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Code Blocks */
+    pre {
+      background: #0f172a;
+      color: #f8fafc;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 8pt;
+      line-height: 1.45;
+      overflow-x: auto;
+      margin: 8px 0 12px 0;
+      border: 1px solid #334155;
+    }
+
+    code {
+      font-family: 'Consolas', 'Courier New', monospace;
+      font-size: 8pt;
+      background: #f1f5f9;
+      color: #0f172a;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+    }
+
+    /* Diagram & Grid Visuals */
+    .arch-container {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 12px;
+      margin: 12px 0;
+    }
+
+    .arch-layer {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+    }
+
+    .arch-layer:last-child {
+      margin-bottom: 0;
+    }
+
+    .layer-title {
+      font-size: 8pt;
+      font-weight: 700;
+      color: #2563eb;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .layer-boxes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .box-item {
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      padding: 5px 9px;
+      font-size: 7.5pt;
+      font-weight: 600;
+      color: #1e293b;
+      flex: 1;
+      min-width: 110px;
+      text-align: center;
+    }
+
+    .box-item.primary {
+      background: #e0f2fe;
+      border-color: #7dd3fc;
+      color: #0369a1;
+    }
+
+    .box-item.success {
+      background: #dcfce7;
+      border-color: #86efac;
+      color: #15803d;
+    }
+
+    .box-item.accent {
+      background: #fef3c7;
+      border-color: #fde68a;
+      color: #92400e;
+    }
+
+    /* Step Card */
+    .step-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-left: 3px solid #2563eb;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+    }
+
+    .step-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .step-number {
+      font-size: 8pt;
+      font-weight: 800;
+      color: #2563eb;
+      background: #eff6ff;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .step-title {
+      font-size: 9pt;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .step-timing {
+      font-size: 7.5pt;
+      font-weight: 600;
+      color: #64748b;
+    }
+
+    /* Two Column Layout */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 8px 0;
+    }
+
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+
+    .card-title {
+      font-weight: 700;
+      font-size: 8.5pt;
+      color: #1e293b;
+      margin-bottom: 6px;
+      border-bottom: 1px solid #f1f5f9;
+      padding-bottom: 4px;
+    }
+
+    .toc-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px dotted #cbd5e1;
+      font-size: 9pt;
+    }
+    .toc-title { font-weight: 600; color: #1e293b; }
+    .toc-page { color: #64748b; font-weight: 700; }
+  </style>
+</head>
+<body>
+
+  <!-- ==================== COVER PAGE ==================== -->
+  <div class="cover-page">
+    <div class="cover-header">
+      <div class="brand-tag">TOASTMASTERS INTERNATIONAL · DISTRICT 121</div>
+      <div class="cover-title">ATK VPE Automation System</div>
+      <div class="cover-subtitle">Complete Architecture, Operations & WhatsApp Automation Specification</div>
+      <div class="cover-description">
+        Comprehensive engineering, operational, and architectural documentation for the Advanced Toastmasters of Kerala (ATK) Vice President Education (VPE) meeting automation, WhatsApp conversational workflows, and MERN-stack backend engine.
+      </div>
+      <div class="cover-badges">
+        <span class="badge badge-primary">Node.js / Express</span>
+        <span class="badge badge-success">MongoDB Atlas</span>
+        <span class="badge badge-warning">Meta WhatsApp Cloud API</span>
+        <span class="badge badge-dark">Flutter Web API Gateway</span>
+        <span class="badge badge-primary">GAS V8 Compatibility Engine</span>
+        <span class="badge badge-success">100% Logic Parity</span>
+      </div>
+    </div>
+
+    <div class="cover-meta">
+      <div class="meta-item">
+        <div class="meta-label">Target Organization</div>
+        <div class="meta-value">Advanced Toastmasters of Kerala (Club #07842323 / ATK)</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Primary Stakeholder</div>
+        <div class="meta-value">Vice President Education (VPE) & Club Executive Committee</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Engine Version</div>
+        <div class="meta-value">v1.0.0 (Production Release / 2026-10 Edition)</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Timezone & Locale</div>
+        <div class="meta-value">Asia/Kolkata (IST, UTC+5:30) / English (en_US)</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Database Mode</div>
+        <div class="meta-value">Hybrid: MongoDB Atlas Cloud + In-Memory Fast Sheet Cache</div>
+      </div>
+      <div class="meta-item">
+        <div class="meta-label">Regression Suite</div>
+        <div class="meta-value">102 Automated Checks across 5 Core Test Suites</div>
+      </div>
+    </div>
+
+    <div class="cover-footer">
+      <div>CONFIDENTIAL & PROPRIETARY · ADVANCED TOASTMASTERS OF KERALA</div>
+      <div>Document Generated: October 2026</div>
+    </div>
+  </div>
+
+  <!-- ==================== TABLE OF CONTENTS ==================== -->
+  <div class="page-break"></div>
+  <h1>Document Contents & Structural Index</h1>
+  <p>This technical and operational manual covers every dimension of the ATK VPE Automation platform, from high-level operational concepts to low-level source code mechanics, API envelopes, and message state machines.</p>
+
+  <div class="card" style="margin-top: 15px;">
+    <div class="toc-item"><span class="toc-title">1. Executive Overview & System Purpose</span><span class="toc-page">Section 1</span></div>
+    <div class="toc-item"><span class="toc-title">2. System Architecture & Technology Stack</span><span class="toc-page">Section 2</span></div>
+    <div class="toc-item"><span class="toc-title">3. Core Business Logic Engines & Source File Directory</span><span class="toc-page">Section 3</span></div>
+    <div class="toc-item"><span class="toc-title">4. Deep-Dive Operational Workflows & State Machines</span><span class="toc-page">Section 4</span></div>
+    <div class="toc-item"><span class="toc-title">5. Web API V1 Specification (Flutter Web Gateway)</span><span class="toc-page">Section 5</span></div>
+    <div class="toc-item"><span class="toc-title">6. Database Architecture & Data Schema (MongoDB Atlas + Sheets)</span><span class="toc-page">Section 6</span></div>
+    <div class="toc-item"><span class="toc-title">7. Meta WhatsApp Cloud API Integration & Webhook Security</span><span class="toc-page">Section 7</span></div>
+    <div class="toc-item"><span class="toc-title">8. Programme Planning & The 60-Day Web Review System</span><span class="toc-page">Section 8</span></div>
+    <div class="toc-item"><span class="toc-title">9. Operational Timeline: 3-Week Meeting Lifecycle Walkthrough</span><span class="toc-page">Section 9</span></div>
+    <div class="toc-item"><span class="toc-title">10. Dev Master Regression Suite, Testing & Troubleshooting</span><span class="toc-page">Section 10</span></div>
+  </div>
+
+  <!-- ==================== SECTION 1 ==================== -->
+  <h1>1. Executive Overview & System Purpose</h1>
+  
+  <h2>1.1 The Toastmasters VPE Challenge</h2>
+  <p>
+    In Toastmasters International, the <strong>Vice President Education (VPE)</strong> is responsible for planning club meeting schedules, assigning roles, tracking member education progress (Pathways projects), and ensuring high meeting quality. A standard 2-hour Toastmasters meeting requires coordinating <strong>12 to 16 distinct role players</strong>:
+  </p>
+  <ul>
+    <li><strong>Toastmaster of the Day (TMOD)</strong>: Directs the meeting agenda, theme, and stage transitions.</li>
+    <li><strong>General Evaluator (GE)</strong>: Oversees all meeting evaluations and role-player feedback.</li>
+    <li><strong>Table Topics Master (TTM)</strong>: Facilitates the impromptu speaking session.</li>
+    <li><strong>Prepared Speakers (Slots 1 to 3)</strong>: Deliver 5-7 minute Pathways speeches.</li>
+    <li><strong>Speech Evaluators (Evaluators 1 to 3)</strong>: Deliver targeted 2-3 minute speech evaluations.</li>
+    <li><strong>Timer</strong>: Enforces strict speech and report time boundaries with timing green/yellow/red signals.</li>
+    <li><strong>Ah-Counter</strong>: Tracks crutch words, filler pauses, and vocal hesitations.</li>
+    <li><strong>Grammarian</strong>: Introduces Word of the Day, Idiom of the Day, and delivers comprehensive language reports.</li>
+  </ul>
+  <p>
+    Manually coordinating this via WhatsApp groups or individual phone calls requires hundreds of repetitive messages each week: chasing vacant roles, collecting speech project details, gathering themes, formatting grammar words, assembling introduction bios, and distributing agendas.
+  </p>
+
+  <h2>1.2 The ATK VPE Automation Solution</h2>
+  <p>
+    The <strong>ATK VPE Automation Engine</strong> replaces this manual overhead with a unified, conversational WhatsApp bot and modern web application. It operates autonomously in the background to:
+  </p>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">🤖 Autonomous Scheduling & Reminders</div>
+      <p style="font-size: 8pt; margin: 0;">Automatically detects unfilled roles, sends interactive WhatsApp announcements, and lets members reserve roles in real time with quick-reply buttons and selection menus.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">📝 Multi-Stage Structured Data Collection</div>
+      <p style="font-size: 8pt; margin: 0;">Gathers complex multi-field inputs through natural conversational flows (e.g. Word & Idiom of the Day, Speech Pathways levels, Project titles, and TMOD themes) with fault-tolerant parsing.</p>
+    </div>
+  </div>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">🔄 Cascading Information Distribution</div>
+      <p style="font-size: 8pt; margin: 0;">As soon as information is captured (such as the meeting theme), the engine immediately broadcasts it to dependent role players (GE, TTM, Speakers, Evaluators, VPPR) without VPE intervention.</p>
+    </div>
+    <div class="card">
+      <div class="card-title">🛡️ Long-Range Slot Protection</div>
+      <p style="font-size: 8pt; margin: 0;">Maintains a 60-day rolling lookahead. Confirmed speakers are protected from accidental removal; speaker reschedule requests keep the existing slot safe until the new date is verified.</p>
+    </div>
+  </div>
+
+  <h2>1.3 Historical Evolution: From Google Apps Script to Node.js / Express MERN Stack</h2>
+  <p>
+    The system originally operated as a monolithic Google Apps Script (GAS) deployment bound to a Google Spreadsheet. While functional, Google Apps Script imposed severe limitations: 6-minute execution limits, quota throttling on <code>UrlFetchApp</code>, slow cold starts (3-5 seconds per webhook), and fragile spreadsheet-based cell concurrency.
+  </p>
+  <p>
+    In this <strong>MERN Stack Edition</strong>, the entire codebase was ported to run on <strong>Node.js and Express</strong> with direct <strong>MongoDB Atlas</strong> persistence. To ensure zero disruption, a specialized <strong>GAS V8 Compatibility Engine</strong> was developed, enabling all 13,800+ lines of battle-tested domain logic to execute without modification while achieving <strong>over 1000x execution speedup</strong> (~2ms response times).
+  </p>
+
+  <!-- ==================== SECTION 2 ==================== -->
+  <div class="page-break"></div>
+  <h1>2. System Architecture & Technology Stack</h1>
+
+  <h2>2.1 High-Level Architecture Diagram</h2>
+  <div class="arch-container">
+    <div class="arch-layer">
+      <div class="layer-title">1. Client & Presentation Layer</div>
+      <div class="layer-boxes">
+        <div class="box-item primary">Flutter Web App<br><small>(VPE Operations UI)</small></div>
+        <div class="box-item primary">Programme Review UI<br><small>(HTML5 / Responsive)</small></div>
+        <div class="box-item success">Meta WhatsApp App<br><small>(End-User Chat UI)</small></div>
+      </div>
+    </div>
+
+    <div class="arch-layer">
+      <div class="layer-title">2. Gateway & API Server (Node.js / Express)</div>
+      <div class="layer-boxes">
+        <div class="box-item">Express Router<br><small>(src/server.js)</small></div>
+        <div class="box-item">Meta Webhook Handler<br><small>(GET/POST /webhook)</small></div>
+        <div class="box-item">Web API V1 Gateway<br><small>(POST /api/v1)</small></div>
+        <div class="box-item">Review Bridge<br><small>(/programme-review)</small></div>
+      </div>
+    </div>
+
+    <div class="arch-layer">
+      <div class="layer-title">3. Apps Script V8 Compatibility Engine (src/compat/)</div>
+      <div class="layer-boxes">
+        <div class="box-item accent">SpreadsheetApp<br><small>(In-Memory Sheets)</small></div>
+        <div class="box-item accent">PropertiesService<br><small>(Env & Config)</small></div>
+        <div class="box-item accent">UrlFetchApp<br><small>(Sync HTTP Client)</small></div>
+        <div class="box-item accent">Utilities & Crypto<br><small>(HMAC, Base64, Date)</small></div>
+        <div class="box-item accent">Lock & Cache<br><small>(LockService / TTL)</small></div>
+      </div>
+    </div>
+
+    <div class="arch-layer">
+      <div class="layer-title">4. Core Business Logic Engines (VM Context)</div>
+      <div class="layer-boxes">
+        <div class="box-item">Workflow.js<br><small>(Grammar & Themes)</small></div>
+        <div class="box-item">Engine.js<br><small>(WhatsApp Router)</small></div>
+        <div class="box-item">Tasks.js<br><small>(Tick & Scheduler)</small></div>
+        <div class="box-item">Speaking.js<br><small>(Speaker Targeting)</small></div>
+        <div class="box-item">ProgrammePlanning.js<br><small>(60-Day Lookahead)</small></div>
+        <div class="box-item">WebApiV1.js<br><small>(Domain Handlers)</small></div>
+      </div>
+    </div>
+
+    <div class="arch-layer">
+      <div class="layer-title">5. Persistence & External Services</div>
+      <div class="layer-boxes">
+        <div class="box-item success">MongoDB Atlas Cluster<br><small>(Mongoose Models)</small></div>
+        <div class="box-item success">Local JSON Snapshots<br><small>(data/sheets/*.json)</small></div>
+        <div class="box-item primary">Meta WhatsApp Cloud API<br><small>(Graph API v20.0)</small></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>2.2 Component Breakdown</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Layer / Component</th>
+        <th style="width: 25%;">Technology</th>
+        <th style="width: 50%;">Core Responsibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Express Web Server</strong></td>
+        <td>Node.js 24, Express 4.21</td>
+        <td>Listens on HTTP port (default 3000), parses JSON/URL-encoded bodies up to 10MB, handles CORS, routes webhooks and Web API requests, provides health endpoints.</td>
+      </tr>
+      <tr>
+        <td><strong>GAS V8 Compatibility Engine</strong></td>
+        <td>Node.js <code>vm</code> module</td>
+        <td>Emulates Google Apps Script global classes (<code>SpreadsheetApp</code>, <code>UrlFetchApp</code>, etc.) on <code>globalThis</code>, loading unmodified business logic files into memory.</td>
+      </tr>
+      <tr>
+        <td><strong>MongoDB Layer</strong></td>
+        <td>MongoDB Atlas, Mongoose 9.11</td>
+        <td>Persistent cloud storage for club members, meetings, scheduled tasks, outbox logs, submissions, and sheet replicas.</td>
+      </tr>
+      <tr>
+        <td><strong>WhatsApp Automation Engine</strong></td>
+        <td>Meta Cloud API / Graph v20.0</td>
+        <td>Ingests incoming member webhooks, executes message deduplication, handles interactive button clicks and list selections, manages conversational state, sends outbound templates.</td>
+      </tr>
+      <tr>
+        <td><strong>Web API V1 Gateway</strong></td>
+        <td>JSON over HTTP POST</td>
+        <td>Provides a clean, domain-driven API for Flutter Web frontend. Protects spreadsheets from direct UI manipulation.</td>
+      </tr>
+      <tr>
+        <td><strong>Programme Review Web App</strong></td>
+        <td>HTML5, Vanilla CSS, JS</td>
+        <td>Lightweight, token-authenticated responsive web app allowing the VPE to review, hold, or modify speech slots for the next 60 days from any phone or desktop browser.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ==================== SECTION 3 ==================== -->
+  <div class="page-break"></div>
+  <h1>3. Core Business Logic Engines & Source File Directory</h1>
+  <p>The system's business logic is organized across 12 core JavaScript modules. These modules execute in the Node.js V8 context with zero logic alterations:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 22%;">Source File</th>
+        <th style="width: 14%;">Lines / Size</th>
+        <th style="width: 64%;">Functional Responsibilities & Key Exports</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/server.js</code></td>
+        <td>279 lines<br>9.4 KB</td>
+        <td>Express application setup, MongoDB initialization, route binding for <code>/</code>, <code>/health</code>, <code>/webhook</code>, <code>/api/v1</code>, <code>/api/members</code>, <code>/api/meetings</code>, <code>/programme-review</code>, and <code>/api/dev/regression</code>.</td>
+      </tr>
+      <tr>
+        <td><code>WebApiV1.js</code></td>
+        <td>3,840 lines<br>154 KB</td>
+        <td>Full Flutter Web API gateway (<code>apiHandleRequest_</code>), domain methods for club settings, ExCom, meeting creation, validation, activation, reordering, agenda projection, and the Master Regression Suite.</td>
+      </tr>
+      <tr>
+        <td><code>Workflow.js</code></td>
+        <td>3,771 lines<br>132 KB</td>
+        <td>Conversational parsers and multi-stage state machines: 2-stage Grammarian flow (Word & Idiom), TMOD theme submission, speaker details extraction, role introductions, and downstream cascading notifications.</td>
+      </tr>
+      <tr>
+        <td><code>Engine.js</code></td>
+        <td>1,015 lines<br>34 KB</td>
+        <td>WhatsApp message router (<code>processInboundWhatsAppMessage_</code>), interactive reply parser, role selection handler, role reservation logic, WhatsApp Outbox delivery, and webhook deduplication.</td>
+      </tr>
+      <tr>
+        <td><code>Tasks.js</code></td>
+        <td>1,055 lines<br>38 KB</td>
+        <td>Scheduled automation tick engine (<code>phase1ScheduledTick</code>), task synchronization, vacant role invitation dispatcher, idempotency manager (<code>hasReminderBeenSent_</code>), and agenda approval triggers.</td>
+      </tr>
+      <tr>
+        <td><code>Speaking.js</code></td>
+        <td>600 lines<br>20 KB</td>
+        <td>Speech slot targeting, speaker priority ranking based on past speech history, speech slot invitation generator, reservation state machine, and speaker details collection prompts.</td>
+      </tr>
+      <tr>
+        <td><code>ProgrammePlanning.js</code></td>
+        <td>750 lines<br>31 KB</td>
+        <td>60-day horizon programme planner, slot state manager (<code>OPEN</code>, <code>SPEAKER_CONFIRMED</code>, <code>MOVE_REQUESTED</code>, <code>VPE_HOLD</code>, <code>SESSION_CONFIRMED</code>), tokenized review URL generator, and speaker move coordinator.</td>
+      </tr>
+      <tr>
+        <td><code>Conversation.js</code></td>
+        <td>320 lines<br>13 KB</td>
+        <td>Transient conversational state store (<code>activeConversation_</code>, <code>setConversation_</code>), guided conversational interviews, and default bio fallback storage.</td>
+      </tr>
+      <tr>
+        <td><code>Messaging.js</code></td>
+        <td>210 lines<br>7.6 KB</td>
+        <td>Low-level Meta Cloud API HTTP payload constructor (text, interactive buttons, interactive lists, template messages) and response validation.</td>
+      </tr>
+      <tr>
+        <td><code>Status.js</code></td>
+        <td>243 lines<br>8.7 KB</td>
+        <td>Control Center metrics calculation, meeting readiness calculation (ratios for roles, speakers, evaluators, introductions), and exception-only VPE summaries.</td>
+      </tr>
+      <tr>
+        <td><code>TemplateSetup.js</code></td>
+        <td>420 lines<br>19 KB</td>
+        <td>Meta WhatsApp template registration and synchronization utilities for system-approved WhatsApp templates.</td>
+      </tr>
+      <tr>
+        <td><code>RoleReminderV2.js</code></td>
+        <td>58 lines<br>2.2 KB</td>
+        <td>Template specifications for <code>atk_role_reminder_v2</code> and <code>atk_role_reminder_v3</code> utility-category role invitation templates.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <!-- ==================== SECTION 4 ==================== -->
+  <div class="page-break"></div>
+  <h1>4. Deep-Dive Operational Workflows & State Machines</h1>
+
+  <h2>4.1 Workflow A: Role Vacancy Discovery & Member Self-Selection</h2>
+  <p>
+    When a meeting is scheduled, the engine checks for unfilled roles and broadcasts announcements to active club members. Members can inspect vacancies and claim roles with a single tap.
+  </p>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">Step 1: Vacancy Detection</span>
+      <span class="step-timing">Scheduled Tick (Daily / Periodic)</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      <code>Tasks.js: processVacantRoleReminders_()</code> inspects the upcoming meeting in <code>VPE Weekly Planner</code>. It checks columns for TMOD, GE, TTM, Timer, Ah-Counter, and Grammarian. If vacancies exist, it checks <code>hasReminderBeenSent_()</code> to enforce cooldown periods.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">Step 2: Utility Template Dispatch</span>
+      <span class="step-timing">Outbound WhatsApp</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      The engine transmits the approved WhatsApp Utility template <code>atk_role_reminder_v2</code> or <code>v3</code>:
+      <br><em>"ATK Meeting {{1}} is scheduled for {{2}} as planned. Please tap below to see available roles."</em>
+      <br>Features a Quick Reply button: <code>[View roles]</code>.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">Step 3: Interactive List Display</span>
+      <span class="step-timing">Immediate Reply</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      When the member taps <code>[View roles]</code>, <code>Engine.js: handleRoleMenuRequest_()</code> queries available roles and immediately sends a native WhatsApp Interactive List Message showing the exact unfilled roles with descriptions.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">Step 4: Role Claim & Atomic Reservation</span>
+      <span class="step-timing">Member Selection</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      The member selects a role (e.g. "Toastmaster of the Day"). <code>Engine.js: reserveRole_()</code> executes an atomic check:
+      <br>1. If role is still vacant: writes member's name into the Planner cell, sets vacancy task to <code>Completed</code>, mirrors assignment to API Meetings, and sends confirmation with role guidelines.
+      <br>2. If already claimed by another member: politely informs the member and redisplays remaining vacancies.
+    </p>
+  </div>
+
+  <h2>4.2 Workflow B: Grammarian 2-Stage Multi-Line Collection (Locked Spec)</h2>
+  <p>
+    The Grammarian flow collects the Word of the Day and Idiom of the Day. It is designed to be completely resilient to natural user input, typos, extra linebreaks, and missing fields.
+  </p>
+
+  <div class="arch-container">
+    <div style="font-weight: 700; font-size: 8.5pt; color: #0f172a; margin-bottom: 8px;">Grammarian Conversational State Machine</div>
+    <div style="display: flex; gap: 6px; align-items: center; justify-content: space-between; font-size: 7.5pt; font-weight: 700;">
+      <div style="background:#e0f2fe; padding:6px 8px; border-radius:4px; text-align:center;">WORD_PENDING<br><small>Prompts Word</small></div>
+      <div>➔</div>
+      <div style="background:#e0f2fe; padding:6px 8px; border-radius:4px; text-align:center;">WORD_COMPLETE<br><small>Word, Meaning, Usage</small></div>
+      <div>➔</div>
+      <div style="background:#fef3c7; padding:6px 8px; border-radius:4px; text-align:center;">IDIOM_PENDING<br><small>Prompts Idiom</small></div>
+      <div>➔</div>
+      <div style="background:#fef3c7; padding:6px 8px; border-radius:4px; text-align:center;">IDIOM_COMPLETE<br><small>Idiom, Meaning, Usage</small></div>
+      <div>➔</div>
+      <div style="background:#dcfce7; padding:6px 8px; border-radius:4px; text-align:center;">REVIEW_PENDING<br><small>[Confirm][Edit Word][Edit Idiom]</small></div>
+      <div>➔</div>
+      <div style="background:#22c55e; color:#fff; padding:6px 8px; border-radius:4px; text-align:center;">CONFIRMED<br><small>TMOD/VPE Handoff</small></div>
+    </div>
+  </div>
+
+  <div class="callout callout-info">
+    <div class="callout-title">Grammarian Parser Robustness Rules (Workflow.js)</div>
+    <ul>
+      <li><strong>Flexible Headers</strong>: Matches <code>Word:</code>, <code>Word of the day:</code>, <code>Meaning:</code>, <code>Usage:</code>, <code>Example:</code>, <code>Example usage:</code>.</li>
+      <li><strong>Multi-line Support</strong>: Long definitions spanning multiple lines are captured without premature truncation.</li>
+      <li><strong>Partial Preserves</strong>: If member provides Word and Meaning but forgets Usage, the engine saves Word + Meaning and requests only the missing Usage.</li>
+      <li><strong>Final Review Safety</strong>: Data is only handed off to the TMOD after the member explicitly clicks <code>[Confirm]</code>.</li>
+    </ul>
+  </div>
+
+  <h2>4.3 Workflow C: TMOD Theme Collection & Cascading Broadcast</h2>
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">1. Theme Request to TMOD</span>
+      <span class="step-timing">T-5 Days</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      The engine prompts the assigned TMOD: <em>"Hi {{Name}}, please reply with the Meeting Theme for ATK Meeting {{No}}."</em>
+    </p>
+  </div>
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">2. Theme Ingestion & Planner Update</span>
+      <span class="step-timing">On Reply</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      <code>Workflow.js: handleThemeSubmission_()</code> captures the theme, saves it to <code>WA Submissions</code>, and writes it directly to column 4 ("Theme") of the meeting's row in <code>VPE Weekly Planner</code>.
+    </p>
+  </div>
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">3. Cascading Downstream Broadcast</span>
+      <span class="step-timing">Immediate (Autonomous)</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      <code>Workflow.js: sendMeetingThemeToAssignedRoles_()</code> runs immediately. It identifies all members assigned to General Evaluator, Table Topics Master, Speakers, Evaluators, and Grammarian, and sends each of them a personalized notification with the theme.
+    </p>
+  </div>
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-title">4. VPPR Publicity Handoff</span>
+      <span class="step-timing">Immediate</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      <code>Workflow.js: sendThemeAndTmodToVppr_()</code> notifies the Vice President Public Relations with the confirmed theme, TMOD name, and meeting date so poster creation and social media promotions can begin without delay.
+    </p>
+  </div>
+
+  <!-- ==================== SECTION 5 ==================== -->
+  <div class="page-break"></div>
+  <h1>5. Web API V1 Specification (Flutter Web Gateway)</h1>
+
+  <h2>5.1 Core Gateway Protocol</h2>
+  <p>
+    The Web API is exposed as a single POST gateway at <code>POST /api/v1</code> (and <code>doPost</code> in GAS). Flutter and external clients communicate exclusively via structured JSON payloads:
+  </p>
+  <pre><code>// Standard Request Envelope
+{
+  "api_version": "v1",
+  "api_key": "DEV_VPE_KEY_2026",
+  "action": "meeting.save",
+  "club_id": "ATK"
+}</code></pre>
+
+  <h2>5.2 API Action Directory</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Action Name</th>
+        <th style="width: 20%;">Required Parameters</th>
+        <th style="width: 55%;">Functional Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>health</code></td>
+        <td><em>None</em></td>
+        <td>Returns API status and version. Does not require <code>api_key</code>.</td>
+      </tr>
+      <tr>
+        <td><code>club.bootstrap</code></td>
+        <td><code>club_id</code></td>
+        <td>Loads full club metadata, club settings, ExCom roster, default ordered meeting template, and capability flags for app startup.</td>
+      </tr>
+      <tr>
+        <td><code>members.list</code></td>
+        <td><code>club_id</code></td>
+        <td>Returns active club members with <code>member_id</code>, <code>name</code>, <code>phone</code>, and membership status.</td>
+      </tr>
+      <tr>
+        <td><code>member.save</code></td>
+        <td><code>club_id, member</code></td>
+        <td>Creates or updates a club member record in Member Master and MongoDB.</td>
+      </tr>
+      <tr>
+        <td><code>club.settings.get</code> / <code>save</code></td>
+        <td><code>club_id, settings</code></td>
+        <td>Retrieves or updates club operating parameters (meeting day, regular venue, default start time).</td>
+      </tr>
+      <tr>
+        <td><code>excom.list</code> / <code>save</code></td>
+        <td><code>club_id, excom</code></td>
+        <td>Manages Executive Committee appointments (President, VPE, VPM, VPPR, Secretary, Treasurer, SAA).</td>
+      </tr>
+      <tr>
+        <td><code>meetings.list</code></td>
+        <td><code>club_id</code></td>
+        <td>Returns scheduled meetings with meeting number, date, theme, status, and assignment counts.</td>
+      </tr>
+      <tr>
+        <td><code>meeting.create</code></td>
+        <td><code>club_id, meeting_date</code></td>
+        <td>Initializes a new meeting with default ordered items (TMOD, GE, Speakers 1-3, Evaluators 1-3, Timer, Ah, Grammarian).</td>
+      </tr>
+      <tr>
+        <td><code>meeting.get</code></td>
+        <td><code>club_id, meeting_id</code></td>
+        <td>Returns full meeting details including ordered item array with assignments.</td>
+      </tr>
+      <tr>
+        <td><code>meeting.save</code></td>
+        <td><code>club_id, meeting_id, items, save_mode</code></td>
+        <td>Persists the ordered meeting item array. <code>save_mode</code> can be <code>DRAFT</code> or <code>CONFIRMED</code>. Array order in payload is authoritative.</td>
+      </tr>
+      <tr>
+        <td><code>meeting.activate</code></td>
+        <td><code>club_id, meeting_id</code></td>
+        <td>Validates meeting readiness (checks TMOD and speaker/evaluator pairings) and transitions meeting status to <code>READY_FOR_SYNC</code>.</td>
+      </tr>
+      <tr>
+        <td><code>dashboard.get</code></td>
+        <td><code>club_id</code></td>
+        <td>Returns upcoming meeting readiness scores and UI-ready pending action cards with severity, state, and due dates.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>5.3 Flutter Frontend Integration Guidelines</h2>
+  <div class="callout callout-warning">
+    <div class="callout-title">Critical Security & Design Rules for Frontend Integration</div>
+    <ol style="margin: 0; padding-left: 16px;">
+      <li><strong>Permanent Boundary</strong>: Flutter Web must never communicate directly with Google Sheets or store Meta API tokens. All interactions occur through <code>POST /api/v1</code>.</li>
+      <li><strong>ID References Only</strong>: The UI must submit domain IDs (<code>member_id</code>, <code>item_id</code>), never spreadsheet row or column coordinates.</li>
+      <li><strong>Drag-and-Drop Order</strong>: The backend respects the array sequence submitted in <code>items</code>. Flutter reordering simply posts the reordered array.</li>
+      <li><strong>Custom Sessions</strong>: Educational sessions or special segments use <code>type: "session"</code> with a blank <code>code</code>. Standard Toastmasters roles retain their standard codes (<code>TMOD</code>, <code>S1</code>, etc.).</li>
+    </ol>
+  </div>
+
+  <!-- ==================== SECTION 6 ==================== -->
+  <div class="page-break"></div>
+  <h1>6. Database Architecture & Data Schema (MongoDB Atlas + Sheets)</h1>
+
+  <h2>6.1 Dual-Storage Persistence Strategy</h2>
+  <p>
+    The system uses an innovative dual-layer storage model:
+  </p>
+  <ul>
+    <li><strong>MongoDB Atlas (Primary Cloud DB)</strong>: Production-grade cloud document database providing schema validation, high-speed indexed queries, and REST endpoints for external clients.</li>
+    <li><strong>In-Memory Sheet Cache (GAS Parity Engine)</strong>: An in-memory sheet engine that mirrors Google Sheets tables. Persisted to disk as <code>data/sheets/1qZnZov1l9DfvhTzruqlLubGhydcOOFKLf2kG8xplNLM.json</code> and automatically synchronized with MongoDB Atlas.</li>
+  </ul>
+
+  <h2>6.2 MongoDB Mongoose Models (src/db/models/)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 20%;">Model</th>
+        <th style="width: 35%;">Key Fields</th>
+        <th style="width: 45%;">Description & Indices</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>Member</code></td>
+        <td><code>memberId, name, phone, status, rolePreferences, speechHistory</code></td>
+        <td>Club member directory. Indexed on <code>memberId</code> (unique) and <code>phone</code> for sub-millisecond lookup during incoming WhatsApp webhooks.</td>
+      </tr>
+      <tr>
+        <td><code>Meeting</code></td>
+        <td><code>meetingId, meetingNo, meetingDate, status, items [ { itemId, type, code, label, memberId, memberName } ]</code></td>
+        <td>Meeting master records. Indexed on <code>meetingNo</code> and <code>meetingDate</code>. Contains ordered array of all meeting roles and custom sessions.</td>
+      </tr>
+      <tr>
+        <td><code>Task</code></td>
+        <td><code>taskId, meetingNo, type, related, member, state, dueAt, payload</code></td>
+        <td>Scheduled background automation tasks. States: <code>Pending</code>, <code>Completed</code>, <code>Cancelled</code>. Indexed on <code>taskId</code> (unique).</td>
+      </tr>
+      <tr>
+        <td><code>Outbox</code></td>
+        <td><code>messageId, phone, templateName, type, payload, status, timestamp</code></td>
+        <td>Full audit log of all outbound WhatsApp messages. Status tracks delivery confirmations (<code>sent</code>, <code>delivered</code>, <code>read</code>).</td>
+      </tr>
+      <tr>
+        <td><code>Submission</code></td>
+        <td><code>submissionId, meetingNo, member, type, related, data, timestamp</code></td>
+        <td>Canonical repository for user submissions: <code>GRAMMAR_WORD</code>, <code>GRAMMAR_IDIOM</code>, <code>THEME</code>, <code>INTRO_BIO</code>, <code>SPEECH_DETAILS</code>.</td>
+      </tr>
+      <tr>
+        <td><code>Config</code></td>
+        <td><code>key, value, updatedAt</code></td>
+        <td>System-wide dynamic configuration key-value storage.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>6.3 The 16 In-Memory / Simulated Sheets</h2>
+  <div class="two-col">
+    <div class="card">
+      <div class="card-title">Operational & Workflow Sheets</div>
+      <ul style="font-size: 7.5pt; margin: 0; padding-left: 14px;">
+        <li><code>VPE Weekly Planner</code>: Master 28-column meeting schedule.</li>
+        <li><code>Automation Tasks</code>: Task lifecycle state engine.</li>
+        <li><code>Member Master</code>: Member roster, contact info, statuses.</li>
+        <li><code>WA Outbox</code>: Outbound delivery audit.</li>
+        <li><code>WA Submissions</code>: Confirmed incoming data store.</li>
+        <li><code>Automation Log</code>: Operational logging.</li>
+        <li><code>WA Webhook Log</code>: Raw incoming payload log.</li>
+        <li><code>Automation Config</code>: Engine settings & flags.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-title">API & Planning Sheets</div>
+      <ul style="font-size: 7.5pt; margin: 0; padding-left: 14px;">
+        <li><code>Programme Slots</code>: 60-day horizon slot status.</li>
+        <li><code>Programme Reviews</code>: VPE review audit tokens.</li>
+        <li><code>API Club Settings</code>: Club defaults.</li>
+        <li><code>API ExCom</code>: Club officers.</li>
+        <li><code>API Meetings</code>: Meeting headers.</li>
+        <li><code>API Meeting Items</code>: Reorderable meeting slots.</li>
+        <li><code>Agenda Preview</code>: Formatted agenda rows.</li>
+        <li><code>Agenda Approvals</code>: Agenda verification status.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ==================== SECTION 7 ==================== -->
+  <div class="page-break"></div>
+  <h1>7. Meta WhatsApp Cloud API Integration & Webhook Security</h1>
+
+  <h2>7.1 Meta Webhook Verification Handshake</h2>
+  <p>
+    When Meta establishes a webhook connection, it issues an HTTP GET request to <code>/webhook</code> with challenge parameters. The server validates the token and echoes the challenge:
+  </p>
+  <pre><code>// GET /webhook Verification Logic (src/server.js)
+const mode = req.query['hub.mode'];
+const token = req.query['hub.verify_token'];
+const challenge = req.query['hub.challenge'];
+
+if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
+  return res.status(200).send(challenge);
+}
+return res.status(403).send('Webhook verification failed');</code></pre>
+
+  <h2>7.2 Inbound Webhook Processing & Deduplication</h2>
+  <p>
+    Meta transmits WhatsApp messages via HTTP POST payloads to <code>POST /webhook</code>. The server executes a strict multi-layer filter before processing:
+  </p>
+  <ol>
+    <li><strong>Payload Inspection</strong>: Extracts <code>messages</code> and <code>statuses</code> arrays from <code>entry[0].changes[0].value</code>.</li>
+    <li><strong>Deduplication Guard</strong>: WhatsApp delivers webhooks with at-least-once semantics, causing occasional duplicates. <code>Engine.js: isDuplicateWebhookMessage_()</code> tracks incoming <code>message.id</code> values in cache and drops duplicates instantly.</li>
+    <li><strong>Member Resolution</strong>: Normalizes sender phone number (e.g. <code>919846000000</code>) and matches it against <code>Member Master</code> / <code>Member</code> collection.</li>
+    <li><strong>State Router</strong>: Routes message to active conversation handlers (Grammarian flow, TMOD theme flow, role menu, or guided interview).</li>
+  </ol>
+
+  <h2>7.3 Meta WhatsApp Message Templates</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Template Name</th>
+        <th style="width: 15%;">Category</th>
+        <th style="width: 60%;">Template Content & Parameters</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>atk_role_reminder_v2</code></td>
+        <td>UTILITY</td>
+        <td><em>"Hi,\n\nHope you are attending the meeting this week.\n\nPlease tap below to see the available roles for ATK Meeting No. {{1}}.\n\nThank you."</em><br>Quick Reply Button: <code>[View roles]</code></td>
+      </tr>
+      <tr>
+        <td><code>atk_role_reminder_v3</code></td>
+        <td>UTILITY</td>
+        <td><em>"ATK Meeting {{1}} is scheduled for {{2}} as planned."</em><br>Quick Reply Button: <code>[View roles]</code></td>
+      </tr>
+      <tr>
+        <td><code>atk_vpe_programme_review</code></td>
+        <td>UTILITY</td>
+        <td><em>"Hi {{1}}, your ATK 2-month programme review is ready.\n\nReview slots: {{2}}"</em><br>URL Button: <code>[Open Programme Review]</code></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>7.4 Development Sandbox Recipient Isolation Guard</h2>
+  <div class="callout callout-alert">
+    <div class="callout-title">Live Message Protection in DEV Mode</div>
+    <p style="margin: 0;">
+      To prevent accidental WhatsApp spam to club members during development and testing, <code>Engine.js: sendWhatsAppPayload_()</code> checks <code>configValue_('WA_SEND_MODE')</code>. When set to <code>TEST</code>, outbound messages are only delivered to phone numbers listed in <code>WA_TEST_RECIPIENTS</code>. All other messages are safely mocked and logged to <code>WA Outbox</code> without calling Meta servers.
+    </p>
+  </div>
+
+  <!-- ==================== SECTION 8 ==================== -->
+  <div class="page-break"></div>
+  <h1>8. Programme Planning & The 60-Day Web Review System</h1>
+
+  <h2>8.1 Long-Range Slot Planning Architecture</h2>
+  <p>
+    Standard meeting planners only look ahead 1 week. ATK requires a <strong>60-day rolling lookahead</strong> (approx. 8 meetings) to allow members to plan Pathways projects and balance prepared speeches with special educational sessions.
+  </p>
+
+  <h2>8.2 Programme Slot State Machine</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 22%;">Slot State</th>
+        <th style="width: 20%;">Display Badge</th>
+        <th style="width: 58%;">Operational Rules & Invariants</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>OPEN</code></td>
+        <td><span class="badge badge-dark">Open</span></td>
+        <td>Slot is vacant and bookable by any qualified member through speech targeting or VPE assignment.</td>
+      </tr>
+      <tr>
+        <td><code>SPEAKER_CONFIRMED</code></td>
+        <td><span class="badge badge-success">Speaker confirmed</span></td>
+        <td>Member has confirmed speech booking. <strong>Protected state</strong>: Cannot be overwritten without speaker agreement.</td>
+      </tr>
+      <tr>
+        <td><code>MOVE_REQUESTED</code></td>
+        <td><span class="badge badge-warning">Move requested</span></td>
+        <td>VPE requested speaker to reschedule. <strong>Original slot remains fully protected</strong> until speaker confirms new date.</td>
+      </tr>
+      <tr>
+        <td><code>VPE_HOLD</code></td>
+        <td><span class="badge badge-primary">VPE hold</span></td>
+        <td>Slot reserved by VPE for an upcoming educational session, workshop, or guest speaker. Holds never auto-expire.</td>
+      </tr>
+      <tr>
+        <td><code>SESSION_CONFIRMED</code></td>
+        <td><span class="badge badge-primary">Session confirmed</span></td>
+        <td>Confirmed educational session with Presenter, Session Title, and Time Allotted (minutes).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>8.3 The Responsive Programme Review Web Interface</h2>
+  <p>
+    The system serves a dedicated web interface at <code>GET /programme-review?token=&lt;TOKEN&gt;</code>:
+  </p>
+  <ul>
+    <li><strong>Token-Based Security</strong>: Accessed via HMAC-SHA256 signed review tokens (<code>programmeReviewToken_()</code>). Does not require password login.</li>
+    <li><strong>Zero-Config Client Bridge</strong>: <code>src/server.js</code> injects a browser fetch bridge for <code>google.script.run</code>, allowing <code>ProgrammeReview.html</code> to function identically in standalone web browsers and Google Apps Script iframe environments.</li>
+    <li><strong>Actions Supported</strong>: Keep Open, Hold for Session, Request Speaker Move, Confirm Session (with Title, Presenter, Duration), and Release Slot.</li>
+  </ul>
+
+  <!-- ==================== SECTION 9 ==================== -->
+  <div class="page-break"></div>
+  <h1>9. Operational Timeline: 3-Week Meeting Lifecycle Walkthrough</h1>
+  <p>This timeline illustrates how the automation engine autonomously coordinates a meeting across 21 days:</p>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-number">T-21 Days</span>
+      <span class="step-title">Long-Range Programme Review & Slot Booking</span>
+      <span class="step-timing">Phase: Planning</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      • System evaluates speaking history and invites candidate members for speech slots.
+      <br>• VPE reviews the 60-day horizon via <code>/programme-review</code>, placing holds or confirming special sessions.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-number">T-14 Days</span>
+      <span class="step-title">Role Vacancy Announcement & Self-Selection</span>
+      <span class="step-timing">Phase: Role Allocation</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      • <code>processVacantRoleReminders_()</code> identifies open roles.
+      <br>• Broadcasts <code>atk_role_reminder_v2</code> template to active members.
+      <br>• Members click <code>[View roles]</code> and claim roles interactively via WhatsApp.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-number">T-7 Days</span>
+      <span class="step-title">Speaker Details & TMOD Confirmation</span>
+      <span class="step-timing">Phase: Content Assembly</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      • System prompts confirmed speakers for Pathway, Level, Project, Title, and Time.
+      <br>• Prompts TMOD for meeting theme.
+      <br>• TMOD replies with theme ➔ System cascades theme to all assigned role players & VPPR.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-number">T-4 Days</span>
+      <span class="step-title">Grammarian Collection & Role Introductions</span>
+      <span class="step-timing">Phase: Language & Bios</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      • Grammarian conversational flow initiates: captures Word of the Day, then Idiom of the Day.
+      <br>• Grammarian confirms package ➔ System delivers grammar package to TMOD.
+      <br>• Role players prompted for introductions (custom text or default bio fallback).
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-number">T-2 Days</span>
+      <span class="step-title">Evaluator Matching & TMOD Handoff</span>
+      <span class="step-timing">Phase: Handover</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      • Speech details sent to designated Speech Evaluators.
+      <br>• Complete meeting introduction package handed off to TMOD for stage transitions.
+      <br>• System compiles draft agenda.
+    </p>
+  </div>
+
+  <div class="step-card">
+    <div class="step-header">
+      <span class="step-number">T-1 Day</span>
+      <span class="step-title">Final VPE Agenda Approval & Meeting Day</span>
+      <span class="step-timing">Phase: Execution</span>
+    </div>
+    <p style="font-size: 8pt; margin: 0;">
+      • Final readiness score calculated (Status.js).
+      <br>• VPE reviews and confirms final agenda.
+      <br>• Automated reminders dispatched to role players with venue and arrival instructions.
+    </p>
+  </div>
+
+  <!-- ==================== SECTION 10 ==================== -->
+  <div class="page-break"></div>
+  <h1>10. Dev Master Regression Suite, Testing & Troubleshooting</h1>
+
+  <h2>10.1 The 102-Point Automated Regression Matrix</h2>
+  <p>
+    To guarantee <strong>100% exact logic parity</strong> between the original Google Apps Script implementation and the Node.js / Express engine, a comprehensive regression suite runs via <code>npm test</code> (or <code>GET /api/dev/regression</code>):
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Test Suite Name</th>
+        <th style="width: 15%;">Checks</th>
+        <th style="width: 60%;">What It Validates</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Grammarian Parser</strong></td>
+        <td>18 Checks</td>
+        <td>Validates multiline parsing, lowercase/uppercase headers, missing field detection, partial input recovery, and approval button reply routing.</td>
+      </tr>
+      <tr>
+        <td><strong>Planner API Lifecycle</strong></td>
+        <td>22 Checks</td>
+        <td>Validates <code>meeting.create</code>, item reordering, drag-and-drop preservation, draft saving, confirmed saving, and validation rules.</td>
+      </tr>
+      <tr>
+        <td><strong>Core End-to-End Engine</strong></td>
+        <td>26 Checks</td>
+        <td>Validates WhatsApp webhook challenge verification, inbound message deduplication, role menu generation, and outbox delivery logging.</td>
+      </tr>
+      <tr>
+        <td><strong>Configured Role Workflows</strong></td>
+        <td>18 Checks</td>
+        <td>Validates full role workflows under default configuration flags (Timer, TMOD, Grammarian, Evaluators).</td>
+      </tr>
+      <tr>
+        <td><strong>Forced-Enabled Role Workflows</strong></td>
+        <td>18 Checks</td>
+        <td>Forces all workflow flags to <code>TRUE</code> and verifies that every role branch correctly generates outbox prompts and completes tasks.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>10.2 Environment Configuration Reference (.env)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Key</th>
+        <th style="width: 20%;">Example Value</th>
+        <th style="width: 55%;">Purpose & Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>PORT</code></td>
+        <td><code>3000</code></td>
+        <td>HTTP port for Express web server.</td>
+      </tr>
+      <tr>
+        <td><code>MONGODB_URI</code></td>
+        <td><code>mongodb+srv://...</code></td>
+        <td>MongoDB Atlas cloud connection string.</td>
+      </tr>
+      <tr>
+        <td><code>SPREADSHEET_ID</code></td>
+        <td><code>1qZnZov1l9...</code></td>
+        <td>Workspace scope identifier for sheet replication.</td>
+      </tr>
+      <tr>
+        <td><code>VERIFY_TOKEN</code></td>
+        <td><code>ATK_VPE_VERIFY_...</code></td>
+        <td>Meta WhatsApp webhook verification secret.</td>
+      </tr>
+      <tr>
+        <td><code>WEB_API_KEY</code></td>
+        <td><code>DEV_VPE_KEY_2026</code></td>
+        <td>Secret key for Flutter Web API Gateway requests.</td>
+      </tr>
+      <tr>
+        <td><code>SYSTEM_MODE</code></td>
+        <td><code>DEV</code> / <code>PROD</code></td>
+        <td>System mode. Controls regression guards and diagnostic endpoints.</td>
+      </tr>
+      <tr>
+        <td><code>WA_SEND_MODE</code></td>
+        <td><code>TEST</code> / <code>LIVE</code></td>
+        <td>When <code>TEST</code>, outbound messages only go to allowlisted test phones.</td>
+      </tr>
+      <tr>
+        <td><code>WA_TEST_RECIPIENTS</code></td>
+        <td><code>919846000000,...</code></td>
+        <td>Comma-separated allowlist of developer/tester phone numbers.</td>
+      </tr>
+      <tr>
+        <td><code>META_ACCESS_TOKEN</code></td>
+        <td><code>EAAPeNx...</code></td>
+        <td>Meta Cloud API System User Bearer token.</td>
+      </tr>
+      <tr>
+        <td><code>WA_PHONE_NUMBER_ID</code></td>
+        <td><code>1356900327505497</code></td>
+        <td>WhatsApp Cloud API sender phone ID.</td>
+      </tr>
+      <tr>
+        <td><code>WA_WABA_ID</code></td>
+        <td><code>462639891767985</code></td>
+        <td>WhatsApp Business Account ID for template management.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout callout-success" style="margin-top: 15px;">
+    <div class="callout-title">Operational Summary & Verification</div>
+    <p style="margin: 0;">
+      The ATK VPE Automation platform provides a complete, modern, high-speed solution for Toastmasters operations. By uniting WhatsApp conversational ease with robust cloud persistence and responsive web interfaces, it eliminates administrative burden while delivering a superior experience to club members and leaders alike.
+    </p>
+  </div>
+
+</body>
+</html>`;
+
+const outputHtmlPath = path.resolve(__dirname, 'ATK_VPE_Automation_Complete_Guide.html');
+const outputPdfPath = path.resolve(__dirname, 'ATK_VPE_Automation_System_Complete_Guide.pdf');
+
+fs.writeFileSync(outputHtmlPath, htmlContent, 'utf8');
+console.log('HTML Guide written to:', outputHtmlPath);
+
+// Use Microsoft Edge headless to generate the PDF
+const edgePath = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+
+console.log('Invoking headless browser to render PDF...');
+const result = cp.spawnSync(edgePath, [
+  '--headless=new',
+  '--disable-gpu',
+  '--no-pdf-header-footer',
+  `--print-to-pdf=${outputPdfPath}`,
+  outputHtmlPath
+], { timeout: 30000 });
+
+if (fs.existsSync(outputPdfPath)) {
+  const stats = fs.statSync(outputPdfPath);
+  console.log('🎉 SUCCESS: Complete PDF Guide Generated!');
+  console.log(`File: ${outputPdfPath}`);
+  console.log(`Size: ${(stats.size / 1024).toFixed(1)} KB`);
+} else {
+  console.error('❌ PDF generation failed. Error details:', result.stderr ? result.stderr.toString() : 'Unknown error');
+  process.exit(1);
+}

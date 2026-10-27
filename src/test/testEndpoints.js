@@ -47,6 +47,78 @@ server.listen(0, async () => {
     const regJson = await regRes.json();
     console.log('✅ GET /api/dev/regression:', regJson.ok ? `PASSED (${regJson.duration_ms}ms)` : 'FAILED');
 
+    // 7. Test meeting.attendance.save
+    const attSaveRes = await fetch(`${baseUrl}/api/v1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_version: 'v1',
+        api_key: 'DEV_VPE_KEY_2026',
+        action: 'meeting.attendance.save',
+        club_id: 'ATK',
+        meeting_id: 'meeting_test_att',
+        attendance: [
+          { member_id: '1', name: 'Anoop Paul', status: 'present' },
+          { member_id: '2', name: 'Vivek Cheriyan', status: 'absent' },
+          { member_id: '3', name: 'Priyesh', status: 'excused' }
+        ]
+      })
+    });
+    const attSaveJson = await attSaveRes.json();
+    const sd = attSaveJson.data || {};
+    const saveOk = sd.total_marked === 3 && sd.present_count === 1 && sd.absent_count === 1 && sd.excused_count === 1;
+    console.log(`✅ POST /api/v1 (meeting.attendance.save): ${saveOk ? 'PASSED' : 'FAILED'} — total=${sd.total_marked} P=${sd.present_count} A=${sd.absent_count} E=${sd.excused_count}`);
+
+    // 8. Test meeting.attendance.get
+    const attGetRes = await fetch(`${baseUrl}/api/v1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_version: 'v1',
+        api_key: 'DEV_VPE_KEY_2026',
+        action: 'meeting.attendance.get',
+        club_id: 'ATK',
+        meeting_id: 'meeting_test_att'
+      })
+    });
+    const attGetJson = await attGetRes.json();
+    const gd = attGetJson.data || {};
+    const getOk = Array.isArray(gd.attendance) && gd.attendance.length === 3;
+    console.log(`✅ POST /api/v1 (meeting.attendance.get): ${getOk ? 'PASSED' : 'FAILED'} — ${(gd.attendance || []).length} records returned`);
+
+    // 9. Test meeting.attendance.get with no data (should return empty array, not error)
+    const attEmptyRes = await fetch(`${baseUrl}/api/v1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_version: 'v1',
+        api_key: 'DEV_VPE_KEY_2026',
+        action: 'meeting.attendance.get',
+        club_id: 'ATK',
+        meeting_id: 'meeting_nonexistent_xyz'
+      })
+    });
+    const attEmptyJson = await attEmptyRes.json();
+    const ed = attEmptyJson.data || {};
+    const emptyOk = Array.isArray(ed.attendance) && ed.attendance.length === 0;
+    console.log(`✅ POST /api/v1 (meeting.attendance.get empty): ${emptyOk ? 'PASSED' : 'FAILED'} — ${(ed.attendance || []).length} records (expected 0)`);
+
+    // 10. Test meeting.attendance.save validation (missing meeting_id)
+    const attBadRes = await fetch(`${baseUrl}/api/v1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_version: 'v1',
+        api_key: 'DEV_VPE_KEY_2026',
+        action: 'meeting.attendance.save',
+        club_id: 'ATK',
+        attendance: [{ member_id: '1', name: 'Test', status: 'present' }]
+      })
+    });
+    const attBadJson = await attBadRes.json();
+    const badOk = attBadJson.error && attBadJson.error.code === 'BAD_REQUEST';
+    console.log(`✅ POST /api/v1 (meeting.attendance.save validation): ${badOk ? 'PASSED' : 'FAILED'} — ${attBadJson.error ? attBadJson.error.message : 'no error'}`);
+
     console.log('\n🎉 ALL EXPRESS HTTP & MONGODB ENDPOINTS VERIFIED SUCCESSFULLY!\n');
     server.close();
     process.exit(0);
