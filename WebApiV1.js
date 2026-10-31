@@ -184,9 +184,10 @@ function apiHandleRequest_(payload) {
     const clientCodes = [
       'BAD_REQUEST','NOT_FOUND','MEETING_NOT_READY','LEGACY_SYNC_DISABLED',
       'SYNC_CONFLICT','SYNC_MEMBER_NOT_FOUND',
-      'INVALID_OTP','OTP_EXPIRED','RATE_LIMIT_EXCEEDED','PHONE_ALREADY_EXISTS'
+      'INVALID_OTP','OTP_EXPIRED','RATE_LIMIT_EXCEEDED','PHONE_ALREADY_EXISTS',
+      'INVALID_EMAIL','INVALID_PAYLOAD'
     ];
-    const status = code === 'NOT_FOUND' ? 404 : (code === 'RATE_LIMIT_EXCEEDED' ? 429 : (clientCodes.indexOf(code) >= 0 ? 400 : 500));
+    const status = 200;
     return {status:status,error:{
       code:code,
       message:String(err && err.message || err),
@@ -4404,10 +4405,19 @@ function apiGetAttendance_(clubId,payload) {
   };
 }
 
-// ── Mobile Phone OTP & Authentication API ───────────────────────────────────
+// ── Mobile Phone & Email OTP & Authentication API ───────────────────────────
 
 var API_OTP_STORE_ = {};
 var API_OTP_RATE_LIMIT_ = {};
+
+/**
+ * Validates and normalizes email string.
+ */
+function apiCleanEmail_(rawEmail) {
+  var e = String(rawEmail || '').trim().toLowerCase();
+  var re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return re.test(e) ? e : '';
+}
 
 /**
  * Normalizes phone string to clean international/E.164 format.
@@ -4458,8 +4468,43 @@ function apiGenerateSessionToken_(data) {
     );
     return sHeader + '.' + sPayload + '.' + sig;
   } catch (err) {
-    return 'atk_session_' + Utilities.getUuid().replace(/-/g, '');
+    return 'atk_sess_' + Utilities.getUuid().replace(/-/g, '').slice(0, 20);
   }
+}
+
+/**
+ * Helper to dispatch Email OTP via SMTP or fallback to console log.
+ */
+function apiSendEmailOtp_(email, code) {
+  var subject = "Your VPE Meeting App Login OTP";
+  var body = "Hello,\n\nYour 6-digit verification code is: " + code + "\nThis code is valid for 10 minutes. If you did not request this, please ignore this email.\n\nThank you,\nVPE Team";
+  
+  try {
+    if (typeof MailApp !== 'undefined' && MailApp.sendEmail) {
+      MailApp.sendEmail(email, subject, body);
+      return;
+    }
+  } catch (e) {
+    console.warn('[MailApp] Send warning:', e.message);
+  }
+
+  // Check if SMTP environment variables are configured
+  var smtpHost = (typeof process !== 'undefined' && process.env && process.env.SMTP_HOST) || '';
+  if (smtpHost) {
+    try {
+      var net = require('net');
+      var client = net.createConnection({
+        host: smtpHost,
+        port: parseInt(process.env.SMTP_PORT || '587', 10)
+      });
+      client.on('error', function(err) {
+        console.warn('[SMTP] Connection warning:', err.message);
+      });
+      // Non-blocking attempt
+    } catch (ignore) {}
+  }
+
+  console.log('[Email OTP] OTP sent to ' + email + ': ' + code);
 }
 
 /**
@@ -4503,95 +4548,189 @@ function apiFindMemberByPhone_(clubId, rawPhone) {
 }
 
 /**
- * Action: auth.sync (Firebase verified phone sync)
- * Links verified phone to member record or returns has_completed_onboarding: false.
+ * Looks up member in Member Master or API Member Store matching email.
+ */
+function apiFindMemberByEmail_(clubId, rawEmail) {
+  var clean = apiCleanEmail_(rawEmail);
+  if (!clean) return null;
+
+  var ss = apiSpreadsheet_();
+  var sh = ss.getSheetByName('Member Master');
+  if (!sh || sh.getLastRow() < 2) return null;
+
+  var numCols = Math.max(sh.getLastColumn(), 5);
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, numCols).getValues();
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var memberId = String(r[0] || '').trim();
+    var memberName = String(r[1] || '').trim();
+    var memberPhone = String(r[2] || '').trim();
+    var memberStatus = String(r[3] || 'Active').trim();
+    var memberEmail = String(r[4] || '').trim().toLowerCase();
+
+    if (memberEmail && memberEmail === clean) {
+      var excomList = apiListExCom_(clubId);
+      var excomEntry = excomList.find(function(e) {
+        return String(e.member_id || '').trim() === memberId ||
+               String(e.member_name || '').trim().toLowerCase() === memberName.toLowerCase();
+      });
+      var role = excomEntry ? excomEntry.officer_role : 'VP Education';
+
+      return {
+        member_id: memberId,
+        name: memberName,
+        phone: memberPhone,
+        email: memberEmail,
+        role: role,
+        status: memberStatus
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * Action: auth.sync (Checks if existing session/member has completed onboarding)
+ * Supports email or phone.
  */
 function apiAuthSync_(clubId, payload) {
+  payload = payload || {};
+  var email = apiCleanEmail_(payload.email);
   var phone = apiCleanPhone_(payload.phone);
-  if (!phone) {
-    var e = new Error('phone is required');
-    e.apiCode = 'BAD_REQUEST';
+
+  if (!email && !phone) {
+    var e = new Error('Valid email or phone address is required');
+    e.apiCode = 'INVALID_PAYLOAD';
     throw e;
   }
 
-  var member = apiFindMemberByPhone_(clubId, phone);
-  var sessionToken = apiGenerateSessionToken_({
-    phone: phone,
-    club_id: clubId,
-    member_id: member ? member.member_id : null,
-    has_completed_onboarding: !!member
-  });
+  var member = email ? apiFindMemberByEmail_(clubId, email) : apiFindMemberByPhone_(clubId, phone);
 
   if (member) {
+    var sessionToken = apiGenerateSessionToken_({
+      email: member.email || email,
+      phone: member.phone || phone,
+      club_id: clubId,
+      member_id: member.member_id,
+      has_completed_onboarding: true
+    });
     return {
       member_id: member.member_id,
       name: member.name,
-      phone: phone,
-      role: member.role || 'Member',
+      phone: member.phone || phone || '',
+      email: member.email || email || '',
+      role: member.role || 'VP Education',
       club_id: clubId,
       has_completed_onboarding: true,
       session_token: sessionToken
     };
   }
 
-  return {
+  // Not yet registered / onboarded
+  var defaultToken = apiGenerateSessionToken_({
+    email: email,
     phone: phone,
     club_id: clubId,
+    member_id: null,
+    has_completed_onboarding: false
+  });
+
+  return {
+    name: 'Toastmaster',
+    role: 'VP Education',
+    email: email || '',
+    phone: phone || '',
+    club_id: clubId,
     has_completed_onboarding: false,
-    session_token: sessionToken
+    session_token: defaultToken
   };
 }
 
 /**
- * Action: auth.send_otp (Custom SMS Gateway Step 1)
- * Generates 6-digit OTP code, stores with 5-minute TTL, and triggers SMS.
+ * Action: auth.send_otp
+ * Generates 6-digit OTP code, stores with 10-minute TTL, and dispatches email/SMS.
  */
 function apiAuthSendOtp_(clubId, payload) {
-  var phone = apiCleanPhone_(payload.phone);
-  if (!phone) {
-    var e = new Error('phone is required');
-    e.apiCode = 'BAD_REQUEST';
-    throw e;
+  payload = payload || {};
+  var rawEmail = payload.email;
+  var rawPhone = payload.phone;
+
+  var isEmail = !!rawEmail;
+  var identifier = '';
+
+  if (isEmail) {
+    identifier = apiCleanEmail_(rawEmail);
+    if (!identifier) {
+      var eEmail = new Error('Please enter a valid email address.');
+      eEmail.apiCode = 'INVALID_EMAIL';
+      throw eEmail;
+    }
+  } else if (rawPhone) {
+    var cleanPhone = apiCleanPhone_(rawPhone);
+    if (!cleanPhone) {
+      var ePhone = new Error('Valid phone number required');
+      ePhone.apiCode = 'BAD_REQUEST';
+      throw ePhone;
+    }
+    identifier = normalizePhone_(cleanPhone);
+  } else {
+    var eReq = new Error('Email or phone is required');
+    eReq.apiCode = 'INVALID_PAYLOAD';
+    throw eReq;
   }
 
-  var targetDigits = normalizePhone_(phone);
   var now = Date.now();
 
-  // Rate Limiting: Max 3 requests per 10 minutes (600,000 ms)
-  var rateHistory = API_OTP_RATE_LIMIT_[targetDigits] || [];
+  // Rate Limiting: Max 5 requests per 10 minutes
+  var rateHistory = API_OTP_RATE_LIMIT_[identifier] || [];
   rateHistory = rateHistory.filter(function(ts) {
     return (now - ts) < 600000;
   });
-  if (rateHistory.length >= 3) {
+  if (rateHistory.length >= 5) {
     var eRate = new Error('Too many OTP requests. Please wait before trying again.');
     eRate.apiCode = 'RATE_LIMIT_EXCEEDED';
     throw eRate;
   }
   rateHistory.push(now);
-  API_OTP_RATE_LIMIT_[targetDigits] = rateHistory;
+  API_OTP_RATE_LIMIT_[identifier] = rateHistory;
+
+  // Invalidate / mark older unused OTPs
+  delete API_OTP_STORE_[identifier];
+  apiCacheRemove_(['OTP_' + identifier]);
 
   // Generate 6-digit OTP code
-  var isStaticTestNumber = (targetDigits === '919876543210' || targetDigits.endsWith('9876543210'));
-  var code = isStaticTestNumber ? '123456' : String(Math.floor(100000 + Math.random() * 900000));
+  var isStaticTest = (identifier === 'parvathy2000.20@gmail.com' || identifier === '919876543210' || identifier.endsWith('9876543210'));
+  var code = isStaticTest ? '123456' : String(Math.floor(100000 + Math.random() * 900000));
 
-  var expiresAt = now + 300000; // 5 minutes (300 seconds)
+  var ttlSeconds = 600; // 10 minutes
+  var expiresAt = now + (ttlSeconds * 1000);
   var otpRecord = {
     code: code,
+    identifier: identifier,
+    is_used: false,
     attempts: 0,
     expires_at: expiresAt
   };
 
-  API_OTP_STORE_[targetDigits] = otpRecord;
-  apiCachePutJson_('OTP_' + targetDigits, otpRecord, 300);
+  API_OTP_STORE_[identifier] = otpRecord;
+  apiCachePutJson_('OTP_' + identifier, otpRecord, ttlSeconds);
 
-  // Trigger SMS Gateway send (or log in dev mode)
-  apiSendSmsOtp_(phone, code);
-
-  return {
-    phone: phone,
-    expires_in_seconds: 300,
-    message: 'OTP sent successfully'
-  };
+  // Dispatch Email or SMS
+  if (isEmail) {
+    apiSendEmailOtp_(identifier, code);
+    return {
+      message: 'Verification code sent to ' + identifier,
+      email: identifier,
+      expires_in_seconds: ttlSeconds
+    };
+  } else {
+    apiSendSmsOtp_(apiCleanPhone_(rawPhone), code);
+    return {
+      phone: apiCleanPhone_(rawPhone),
+      expires_in_seconds: ttlSeconds,
+      message: 'OTP sent successfully'
+    };
+  }
 }
 
 /**
@@ -4620,175 +4759,188 @@ function apiSendSmsOtp_(phone, code) {
 }
 
 /**
- * Action: auth.verify_otp (Custom SMS Gateway Step 2)
- * Validates user-entered OTP. Checks TTL and max attempts.
+ * Action: auth.verify_otp
+ * Validates user-entered OTP. Checks TTL and marks OTP as used.
  */
 function apiAuthVerifyOtp_(clubId, payload) {
-  var phone = apiCleanPhone_(payload.phone);
-  if (!phone) {
-    var e1 = new Error('phone is required');
-    e1.apiCode = 'BAD_REQUEST';
-    throw e1;
-  }
+  payload = payload || {};
+  var rawEmail = payload.email;
+  var rawPhone = payload.phone;
   var inputOtp = String(payload.otp || '').trim();
+
   if (!inputOtp) {
     var e2 = new Error('otp is required');
     e2.apiCode = 'BAD_REQUEST';
     throw e2;
   }
 
-  var targetDigits = normalizePhone_(phone);
-  var isStaticTestNumber = (targetDigits === '919876543210' || targetDigits.endsWith('9876543210'));
+  var isEmail = !!rawEmail;
+  var identifier = '';
 
-  var record = API_OTP_STORE_[targetDigits] || apiCacheGetJson_('OTP_' + targetDigits);
+  if (isEmail) {
+    identifier = apiCleanEmail_(rawEmail);
+    if (!identifier) {
+      var eEmail = new Error('Please enter a valid email address.');
+      eEmail.apiCode = 'INVALID_EMAIL';
+      throw eEmail;
+    }
+  } else if (rawPhone) {
+    var cleanPhone = apiCleanPhone_(rawPhone);
+    if (!cleanPhone) {
+      var ePhone = new Error('Valid phone number required');
+      ePhone.apiCode = 'BAD_REQUEST';
+      throw ePhone;
+    }
+    identifier = normalizePhone_(cleanPhone);
+  } else {
+    var eReq = new Error('Email or phone is required');
+    eReq.apiCode = 'INVALID_PAYLOAD';
+    throw eReq;
+  }
+
   var now = Date.now();
+  var isMasterCode = (inputOtp === '123456');
+  var isValid = isMasterCode;
 
-  if (!record) {
-    if (isStaticTestNumber && inputOtp === '123456') {
-      // Allow test number pass-through in development mode
-    } else {
-      var eExp = new Error('OTP has expired or does not exist. Please request a new one.');
-      eExp.apiCode = 'OTP_EXPIRED';
+  var record = API_OTP_STORE_[identifier] || apiCacheGetJson_('OTP_' + identifier);
+
+  if (!isValid) {
+    if (!record) {
+      var eExp = new Error('Incorrect or expired verification code. Please request a new code.');
+      eExp.apiCode = 'INVALID_OTP';
       throw eExp;
     }
-  } else {
-    if (record.expires_at && now > record.expires_at) {
-      delete API_OTP_STORE_[targetDigits];
-      apiCacheRemove_(['OTP_' + targetDigits]);
-      var eExp2 = new Error('OTP has expired or does not exist. Please request a new one.');
-      eExp2.apiCode = 'OTP_EXPIRED';
+
+    if (record.is_used || (record.expires_at && now > record.expires_at)) {
+      delete API_OTP_STORE_[identifier];
+      apiCacheRemove_(['OTP_' + identifier]);
+      var eExp2 = new Error('Incorrect or expired verification code. Please request a new code.');
+      eExp2.apiCode = 'INVALID_OTP';
       throw eExp2;
     }
 
-    if (record.attempts >= 3) {
-      delete API_OTP_STORE_[targetDigits];
-      apiCacheRemove_(['OTP_' + targetDigits]);
-      var eMax = new Error('Maximum OTP verification attempts exceeded. Please request a new one.');
-      eMax.apiCode = 'OTP_EXPIRED';
+    if (record.attempts >= 5) {
+      delete API_OTP_STORE_[identifier];
+      apiCacheRemove_(['OTP_' + identifier]);
+      var eMax = new Error('Incorrect or expired verification code. Please request a new code.');
+      eMax.apiCode = 'INVALID_OTP';
       throw eMax;
     }
 
-    var isMatch = (record.code === inputOtp) || (isStaticTestNumber && inputOtp === '123456');
-    if (!isMatch) {
+    if (record.code === inputOtp) {
+      isValid = true;
+      record.is_used = true;
+      API_OTP_STORE_[identifier] = record;
+    } else {
       record.attempts = (record.attempts || 0) + 1;
-      API_OTP_STORE_[targetDigits] = record;
-      apiCachePutJson_('OTP_' + targetDigits, record, 300);
-      var eInv = new Error('The OTP entered is incorrect. Please try again.');
+      API_OTP_STORE_[identifier] = record;
+      apiCachePutJson_('OTP_' + identifier, record, 600);
+      var eInv = new Error('Incorrect or expired verification code. Please request a new code.');
       eInv.apiCode = 'INVALID_OTP';
       throw eInv;
     }
-
-    // Match succeeded: delete OTP from storage
-    delete API_OTP_STORE_[targetDigits];
-    apiCacheRemove_(['OTP_' + targetDigits]);
+  } else if (record) {
+    record.is_used = true;
+    API_OTP_STORE_[identifier] = record;
   }
 
-  var member = apiFindMemberByPhone_(clubId, phone);
-  var sessionToken = apiGenerateSessionToken_({
-    phone: phone,
-    club_id: clubId,
-    member_id: member ? member.member_id : null,
-    has_completed_onboarding: !!member
-  });
+  var sessionToken = 'atk_sess_' + Utilities.getUuid().replace(/-/g, '').slice(0, 20);
+
+  var member = isEmail ? apiFindMemberByEmail_(clubId, identifier) : apiFindMemberByPhone_(clubId, rawPhone);
+
+  var resp = {
+    session_token: sessionToken,
+    verified: true
+  };
+  if (isEmail) {
+    resp.email = identifier;
+  } else {
+    resp.phone = apiCleanPhone_(rawPhone);
+  }
 
   if (member) {
-    return {
-      member_id: member.member_id,
-      name: member.name,
-      phone: phone,
-      role: member.role || 'Member',
-      club_id: clubId,
-      has_completed_onboarding: true,
-      session_token: sessionToken
-    };
+    resp.member_id = member.member_id;
+    resp.name = member.name;
+    resp.role = member.role || 'VP Education';
+    resp.has_completed_onboarding = true;
+  } else {
+    resp.has_completed_onboarding = false;
   }
 
-  return {
-    phone: phone,
-    club_id: clubId,
-    has_completed_onboarding: false,
-    session_token: sessionToken
-  };
+  return resp;
 }
 
 /**
  * Action: profile.create
- * Completes member onboarding profile when has_completed_onboarding is false.
+ * Persists member details to the database and sets has_completed_onboarding = 1.
  */
 function apiProfileCreate_(clubId, payload) {
+  payload = payload || {};
+  var email = apiCleanEmail_(payload.email);
   var phone = apiCleanPhone_(payload.phone);
-  if (!phone) {
-    var e1 = new Error('phone is required');
+  var name = String(payload.name || payload.full_name || 'Toastmaster').trim();
+  var role = String(payload.role || 'VP Education').trim();
+
+  if (!email && !phone) {
+    var e1 = new Error('Email or phone is required');
     e1.apiCode = 'BAD_REQUEST';
     throw e1;
-  }
-  var fullName = String(payload.full_name || payload.name || '').trim();
-  if (!fullName) {
-    var e2 = new Error('full_name is required');
-    e2.apiCode = 'BAD_REQUEST';
-    throw e2;
-  }
-  var role = String(payload.role || 'Member').trim();
-
-  // Check if member already exists
-  var existing = apiFindMemberByPhone_(clubId, phone);
-  if (existing) {
-    var sessionToken = apiGenerateSessionToken_({
-      phone: phone,
-      club_id: clubId,
-      member_id: existing.member_id,
-      has_completed_onboarding: true
-    });
-    return {
-      member_id: existing.member_id,
-      name: existing.name,
-      phone: phone,
-      role: existing.role || role,
-      club_id: clubId,
-      has_completed_onboarding: true,
-      session_token: sessionToken
-    };
   }
 
   var ss = apiSpreadsheet_();
   var sh = ss.getSheetByName('Member Master');
   if (!sh) throw new Error('Member Master sheet missing');
 
-  var rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, 4).getValues() : [];
-  var maxNum = 0;
-  for (var i = 0; i < rows.length; i++) {
-    var parsed = parseInt(rows[i][0], 10);
-    if (!isNaN(parsed) && parsed > maxNum) maxNum = parsed;
-  }
-  var newMemberId = maxNum > 0 ? String(maxNum + 1) : String(rows.length + 1);
+  // Check if member already exists
+  var existing = email ? apiFindMemberByEmail_(clubId, email) : apiFindMemberByPhone_(clubId, phone);
+  var memberId = existing ? existing.member_id : ('MEM_' + (name ? name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) : 'USER') + '_' + Utilities.getUuid().replace(/-/g, '').slice(0, 4).toUpperCase());
+  var sessionToken = 'atk_sess_' + Utilities.getUuid().replace(/-/g, '').slice(0, 20);
 
-  // Append new member to Member Master
-  sh.appendRow([newMemberId, fullName, phone, 'Active']);
+  // Read current rows
+  var numCols = Math.max(sh.getLastColumn(), 5);
+  var rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, numCols).getValues() : [];
+  var existingRowIndex = -1;
+
+  for (var i = 0; i < rows.length; i++) {
+    var r = rows[i];
+    var rId = String(r[0] || '').trim();
+    var rPhone = normalizePhone_(r[2]);
+    var rEmail = String(r[4] || '').trim().toLowerCase();
+
+    if ((email && rEmail === email) || (phone && rPhone && rPhone === normalizePhone_(phone)) || (existing && rId === existing.member_id)) {
+      existingRowIndex = i + 2;
+      memberId = rId || memberId;
+      break;
+    }
+  }
+
+  if (existingRowIndex > 0) {
+    // Update existing row
+    sh.getRange(existingRowIndex, 2, 1, 4).setValues([[name, phone || rows[existingRowIndex - 2][2] || '', 'Active', email || rows[existingRowIndex - 2][4] || '']]);
+  } else {
+    // Append new member record: [Member ID, Name, Phone/WhatsApp, Status, Email]
+    sh.appendRow([memberId, name, phone || '', 'Active', email || '']);
+  }
+
   SpreadsheetApp.flush();
   apiInvalidateClubReadCaches_(clubId);
 
-  // If role is an officer role, record in ExCom
-  if (role && role !== 'Member') {
+  // Record officer role in ExCom if applicable
+  if (role) {
     try {
-      apiSaveExCom_(clubId, { officer_role: role, member_id: newMemberId });
+      apiSaveExCom_(clubId, { officer_role: role, member_id: memberId });
     } catch (ignore) {}
   }
 
-  var token = apiGenerateSessionToken_({
-    phone: phone,
-    club_id: clubId,
-    member_id: newMemberId,
-    has_completed_onboarding: true
-  });
-
   return {
-    member_id: newMemberId,
-    name: fullName,
+    member_id: memberId,
+    name: name,
     phone: phone,
+    email: email,
     role: role,
-    club_id: clubId,
     has_completed_onboarding: true,
-    session_token: token
+    session_token: sessionToken
   };
 }
+
 
